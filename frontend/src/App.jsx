@@ -1,35 +1,37 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import TicketForm from './components/TicketForm';
+import TicketList from './components/TicketList';
+import Dashboard from './components/Dashboard';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const handleTicketCreated = () => {
+    // Optionally refresh list or navigate
+    window.location.reload(); // Simple refresh for now
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <Router>
+      <div className="container">
+        <nav>
+          <div>
+            <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>TICKET SYSTEM v1.0</span>
+          </div>
+          <div>
+            <Link to="/">Dashboard</Link>
+            <Link to="/tickets">Tickets</Link>
+            <Link to="/new">New Ticket</Link>
+          </div>
+        </nav>
+
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/tickets" element={<TicketList />} />
+          <Route path="/new" element={<TicketForm onTicketCreated={handleTicketCreated} />} />
+        </Routes>
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    </Router>
+  );
 }
 
-export default App
+export default App;

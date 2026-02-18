@@ -31,7 +31,8 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports:
-      - "3000:3000"
+      - "5173:5173"
+    stdin_open: true
     environment:
       - CHOKIDAR_USEPOLLING=true
 
