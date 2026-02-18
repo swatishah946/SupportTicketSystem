@@ -4,7 +4,7 @@ import google.generativeai as genai
 
 def classify_ticket(description):
     """
-    Classifies a ticket using Google Gemini 1.5 Flash.
+    Classifies a ticket using Google Gemini 2.5 Flash.
     Returns a dictionary with 'suggested_category' and 'suggested_priority'.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
