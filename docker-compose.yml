@@ -21,6 +21,8 @@ services:
       - "8000:8000"
     depends_on:
       - db
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgres://postgres:postgrespassword@db:5432/ticket_system
       - GEMINI_API_KEY=${GEMINI_API_KEY}

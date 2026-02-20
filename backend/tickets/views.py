@@ -1,19 +1,38 @@
-from rest_framework import viewsets, filters, status
+from rest_framework import viewsets, filters, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Count, Q, Avg
 from django.db.models.functions import TruncDate
 from django_filters.rest_framework import DjangoFilterBackend
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
+from dj_rest_auth.registration.views import SocialLoginView
+
 from .models import Ticket
 from .serializers import TicketSerializer
 from .llm_utils import classify_ticket
 
+class GoogleLogin(SocialLoginView):
+    adapter_class = GoogleOAuth2Adapter
+    callback_url = "http://localhost:5173" 
+    client_class = OAuth2Client
+
 class TicketViewSet(viewsets.ModelViewSet):
-    queryset = Ticket.objects.all().order_by('-created_at')
     serializer_class = TicketSerializer
+    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['category', 'priority', 'status']
     search_fields = ['title', 'description']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'customer':
+            return Ticket.objects.filter(created_by=user).order_by('-created_at')
+        # Admin and Support Agent see all
+        return Ticket.objects.all().order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
     @action(detail=False, methods=['post'])
     def classify(self, request):
@@ -26,13 +45,14 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        # ... (existing stats code)
+        # Only admins/agents should see stats ideally, but keeping open for now or check role
+        if request.user.role == 'customer':
+             return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+
         aggregates = Ticket.objects.aggregate(
             total_tickets=Count('id'),
             open_tickets=Count('id', filter=Q(status='open'))
         )
-        # ... (rest of stats code)
-
         
         # Breakdowns
         priority_data = Ticket.objects.values('priority').annotate(count=Count('id'))
@@ -59,4 +79,3 @@ class TicketViewSet(viewsets.ModelViewSet):
             "priority_breakdown": priority_breakdown,
             "category_breakdown": category_breakdown
         })
-

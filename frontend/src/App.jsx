@@ -1,36 +1,82 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import TicketForm from './components/TicketForm';
-import TicketList from './components/TicketList';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import Dashboard from './components/Dashboard';
+import AdminDashboard from './components/AdminDashboard';
+import ControllerDashboard from './components/ControllerDashboard';
+import CustomerDashboard from './components/CustomerDashboard';
+import TicketList from './components/TicketList';
+import TicketForm from './components/TicketForm';
+import NavBar from './components/NavBar';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './context/AuthContext';
 
 function App() {
-  const handleTicketCreated = () => {
-    // Optionally refresh list or navigate
-    window.location.reload(); // Simple refresh for now
-  };
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_OAUTH || "YOUR_GOOGLE_CLIENT_ID_HERE";
 
   return (
-    <Router>
-      <div className="container">
-        <nav>
-          <div>
-            <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>TICKET SYSTEM v1.0</span>
-          </div>
-          <div>
-            <Link to="/">Dashboard</Link>
-            <Link to="/tickets">Tickets</Link>
-            <Link to="/new">New Ticket</Link>
-          </div>
-        </nav>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <AuthProvider>
+        <Router>
+          <NavBar />
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
 
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/tickets" element={<TicketList />} />
-          <Route path="/new" element={<TicketForm onTicketCreated={handleTicketCreated} />} />
-        </Routes>
-      </div>
-    </Router>
+            {/* Protected Routes */}
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/agent"
+              element={
+                <ProtectedRoute allowedRoles={['support_agent']}>
+                  <ControllerDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <CustomerDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/tickets"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'support_agent', 'customer']}>
+                  <TicketList />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/new"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'support_agent', 'customer']}>
+                  <TicketForm />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Fallback route */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Router>
+      </AuthProvider>
+    </GoogleOAuthProvider>
   );
 }
 

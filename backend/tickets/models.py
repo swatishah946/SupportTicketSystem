@@ -1,4 +1,13 @@
+from django.contrib.auth.models import AbstractUser
 from django.db import models
+
+class User(AbstractUser):
+    ROLE_CHOICES = [
+        ('customer', 'Customer'),
+        ('support_agent', 'Support Agent'),
+        ('admin', 'Admin'),
+    ]
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='customer')
 
 class Ticket(models.Model):
     CATEGORY_CHOICES = [
@@ -28,6 +37,10 @@ class Ticket(models.Model):
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    # New fields
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tickets_created', null=True, blank=True)
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets_assigned')
 
     def __str__(self):
         return f"{self.title} ({self.status})"
