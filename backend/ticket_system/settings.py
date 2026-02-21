@@ -24,7 +24,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-dev-key')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost 127.0.0.1 0.0.0.0").split(" ")
+ALLOWED_HOSTS = ['20.191.144.90', 'localhost', '127.0.0.1']
 
 # Application definition
 
@@ -214,5 +214,15 @@ SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
 
 
 # CORS
-CORS_ALLOW_ALL_ORIGINS = True 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://20.191.144.90",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173"
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://20.191.144.90",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173"
+]

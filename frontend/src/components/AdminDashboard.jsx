@@ -54,9 +54,19 @@ const AdminDashboard = () => {
         <div style={{ padding: '20px', fontFamily: 'monospace' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h1 style={{ textTransform: 'uppercase', margin: 0 }}>Admin Dashboard</h1>
-                <a href="http://localhost:8000/admin/" target="_blank" rel="noopener noreferrer">
+                <a href={`${import.meta.env.VITE_API_URL.replace('/api', '')}/admin/`} target="_blank" rel="noopener noreferrer">
                     <button style={btnStyle}>
                         OPEN DJANGO ADMIN (USER MANAGEMENT)
+                    </button>
+                </a>
+            </div>
+
+            <div style={{ marginTop: '20px', padding: '15px', border: '2px dashed black', backgroundColor: '#fffbe6' }}>
+                <h3 style={{ marginTop: 0 }}>Advanced System Management</h3>
+                <p>Need to manage User Accounts, Agent Roles, or wipe data? Access the raw database console here:</p>
+                <a href={`${import.meta.env.VITE_API_URL.replace('/api', '')}/admin/`} target="_blank" rel="noopener noreferrer">
+                    <button style={{ padding: '10px 20px', backgroundColor: '#d32f2f', color: 'white', border: 'none', boxShadow: '4px 4px 0px #888', cursor: 'pointer', fontWeight: 'bold', fontFamily: 'monospace', textTransform: 'uppercase' }}>
+                        Open Django Admin Panel
                     </button>
                 </a>
             </div>
