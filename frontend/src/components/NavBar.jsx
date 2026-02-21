@@ -54,7 +54,7 @@ const NavBar = () => {
 
     return (
         <nav style={navStyle}>
-            <Link to="/" style={logoStyle}>TICKET_SYSTEM</Link>
+            <Link to="/" style={logoStyle}>NEXUS DESK</Link>
             <div>
                 {!user ? (
                     <>
@@ -65,18 +65,26 @@ const NavBar = () => {
                     <>
                         {user.role === 'admin' && (
                             <>
-                                <Link to="/" style={linkStyle}>DASHBOARD</Link>
+                                <Link to="/admin" style={linkStyle}>DASHBOARD</Link>
                                 <Link to="/tickets" style={linkStyle}>ALL TICKETS</Link>
                             </>
                         )}
                         {user.role === 'support_agent' && (
-                            <Link to="/tickets" style={linkStyle}>ALL TICKETS</Link>
+                            <>
+                                <Link to="/agent" style={linkStyle}>DASHBOARD</Link>
+                                <Link to="/tickets" style={linkStyle}>ALL TICKETS</Link>
+                            </>
                         )}
                         {user.role === 'customer' && (
-                            <Link to="/tickets" style={linkStyle}>MY TICKETS</Link>
+                            <>
+                                <Link to="/dashboard" style={linkStyle}>MY DASHBOARD</Link>
+                                <Link to="/tickets" style={linkStyle}>MY TICKETS</Link>
+                            </>
                         )}
 
-                        <Link to="/new" style={linkStyle}>NEW TICKET</Link>
+                        {user.role === 'customer' && (
+                            <Link to="/new" style={linkStyle}>NEW TICKET</Link>
+                        )}
 
                         <button onClick={logout} style={techBtnStyle}>LOGOUT</button>
                     </>

@@ -40,7 +40,18 @@ class Ticket(models.Model):
     
     # New fields
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tickets_created', null=True, blank=True)
-    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets_assigned')
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_tickets')
+    resolution_notes = models.TextField(blank=True, null=True)
+    has_unread_updates = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.title} ({self.status})"
+
+class TicketComment(models.Model):
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(User, on_delete=models.CASCADE)
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Comment by {self.author.email} on {self.ticket.title}"

@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import Ticket
+from django.contrib.auth.admin import UserAdmin
+from .models import Ticket, User
+
+@admin.register(User)
+class CustomUserAdmin(UserAdmin):
+    fieldsets = UserAdmin.fieldsets + (
+        ('Custom Role', {'fields': ('role',)}),
+    )
+    list_display = ('username', 'email', 'role', 'is_staff')
 
 @admin.register(Ticket)
 class TicketAdmin(admin.ModelAdmin):

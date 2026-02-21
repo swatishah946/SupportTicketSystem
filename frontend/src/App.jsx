@@ -8,9 +8,11 @@ import AdminDashboard from './components/AdminDashboard';
 import ControllerDashboard from './components/ControllerDashboard';
 import CustomerDashboard from './components/CustomerDashboard';
 import TicketList from './components/TicketList';
+import TicketDetail from './components/TicketDetail';
 import TicketForm from './components/TicketForm';
 import NavBar from './components/NavBar';
 import ProtectedRoute from './components/ProtectedRoute';
+import RootRedirect from './components/RootRedirect';
 import { AuthProvider } from './context/AuthContext';
 
 function App() {
@@ -24,6 +26,9 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+
+            {/* Root Intelligent Redirect */}
+            <Route path="/" element={<RootRedirect />} />
 
             {/* Protected Routes */}
             <Route
@@ -58,6 +63,15 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['admin', 'support_agent', 'customer']}>
                   <TicketList />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/tickets/:id"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'support_agent', 'customer']}>
+                  <TicketDetail />
                 </ProtectedRoute>
               }
             />

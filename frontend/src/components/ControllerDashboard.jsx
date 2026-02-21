@@ -10,7 +10,7 @@ const ControllerDashboard = () => {
             </div>
 
             <section>
-                <TicketList />
+                <TicketList splitByAssignment={true} />
             </section>
         </div>
     );
