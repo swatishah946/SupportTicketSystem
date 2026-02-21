@@ -1,59 +1,62 @@
-# Support Ticket System
+# 🎫 NexusDesk: AI-Powered Support Ticketing System
 
-A full-stack support ticket management system I built featuring an AI-powered auto-categorization engine, a custom "Technical Blueprint" user interface, and real-time aggregated metrics. 
+**Live Production URL:** [http://nexusdesk-support.southeastasia.cloudapp.azure.com](http://nexusdesk-support.southeastasia.cloudapp.azure.com)
 
-## 📸 Screenshots
+NexusDesk is a professional-grade, full-stack support platform built to bridge the gap between customers and support teams. It features a robust **Django REST API**, a high-performance **React (Vite)** frontend, and is fully containerized with **Docker** for cloud-native deployment on **Microsoft Azure**.
+
+## 📸 Project Gallery
 
 ![Dashboard Screenshot](./screenshots/dashboard.png)
-*Stats Dashboard rendering DB-aggregated metrics.*
+*Stats Dashboard rendering DB-aggregated metrics from PostgreSQL.*
 
 ![Create Ticket Screenshot](./screenshots/create_ticket.png)
-*Ticket Creation form with LLM-powered auto-suggestions running in the background.*
+*Ticket Creation form with LLM-powered auto-suggestions (Gemini) running in the background.*
 
-![Ticket List Screenshot](./screenshots/ticket_list.png)
-*Ticket List with active filtering and search functionality.*
+## 🛠️ Tech Stack & Infrastructure
 
-## �️ What I Used (Tech Stack)
+I containerized the entire application using **Docker & Docker Compose** to ensure seamless transitions between development and production.
 
-I containerized the entire application using **Docker & Docker Compose** to ensure it runs seamlessly in any environment.
+* **Backend:** Django 5.x, Django REST Framework (DRF), WhiteNoise (Static Files)
+* **Frontend:** React 18+ (Vite), Axios, CSS (Custom Blueprint Theme)
+* **Database:** PostgreSQL (Production), SQLite (Development)
+* **AI Integration:** Google Gemini 2.5 Flash via the `google-genai` SDK
+* **Cloud & DevOps:** Microsoft Azure (Ubuntu VM), Azure DNS, Nginx, Google OAuth2
 
-* **Backend:** Django, Django REST Framework (DRF), Python
-* **Database:** PostgreSQL
-* **Frontend:** React, Vite, CSS
-* **AI Integration:** Google Gemini 2.5 Flash (`google-genai` SDK)
+## ✨ Core Features
 
-## ✨ What's In It (Core Features)
+1. **AI Support Agent & Smart Categorization:** When a user describes a problem, the integrated **Gemini AI Support Agent** analyzes the text in real-time. It doesn't just categorize the ticket; it acts as a first-line responder by generating helpful, context-aware solution suggestions and pre-filling technical metadata like Priority and Category.
+2. **Google OAuth2 Authentication:** Secure, one-tap login for users, fully configured for production environments via Azure DNS mapping.
+3. **Role-Based Access Control (RBAC):** Custom `AccountAdapter` logic directs users to specific interfaces; Staff are routed to the **Admin Management Panel**, while users go to the **Customer Dashboard**.
+4. **Database-Level Performance:** Dashboard statistics utilize Django ORM's `aggregate` and `annotate` functions to push heavy computations to PostgreSQL for maximum efficiency.
+5. **Professional Cloud Deployment:** Hosted on an Azure Virtual Machine with a dedicated DNS label, ensuring a stable and professional public endpoint.
 
-1. **AI-Powered Ticket Creation:** When a user types a problem description, the frontend seamlessly pings the backend LLM service. The LLM reads the description and instantly pre-fills the Category and Priority dropdowns. Users can accept these suggestions or override them manually.
-2. **Dashboard & Analytics:** A real-time dashboard displaying total tickets, open tickets, average tickets per day, and breakdowns by category/priority.
-3. **Advanced Filtering & Search:** A complete ticket browsing interface where users can filter by status and priority, and search via text across titles and descriptions.
-4. **Resilient Architecture:** If the LLM API is down or the API key is missing, the system gracefully degrades. Users can still create tickets manually without the app crashing.
+## 🧠 Design Decisions: The AI Agent Logic
 
-## 🧠 Design Decisions & Architecture
+For the AI integration, I chose **Google's Gemini 2.5 Flash**. I specifically selected it because:
+* **Inference Speed:** Crucial for a fluid UI experience where the "Support Agent" provides suggestions while the user is still interacting with the form.
+* **Instruction Following:** It natively supports strict JSON-mode outputs, ensuring the backend always receives a structured dictionary of categories and agent responses rather than messy conversational text.
+* **Graceful Degradation:** If the AI service is unreachable, the system automatically falls back to manual entry mode, ensuring the core ticketing service remains 100% available.
 
-I made several specific architectural choices while building this project to prioritize performance and reliability:
+## 🚀 Installation & Setup
 
-* **Database-Level Aggregation:** I avoided using Python `for` loops to calculate the dashboard statistics. Instead, I heavily utilized Django ORM's `aggregate`, `annotate`, and `Count` functions. This pushes the heavy lifting to PostgreSQL, making the `/api/tickets/stats/` endpoint highly performant even with thousands of tickets.
-* **Database-Enforced Constraints:** All field constraints (max lengths, category choices, priority levels) are strictly enforced at the PostgreSQL database level, not just in the Django forms or React frontend. This guarantees absolute data integrity.
-* **Why Gemini 2.5 Flash?** For the AI integration, I chose Google's Gemini 2.5 Flash. I specifically selected it because of its blazing-fast inference speed (crucial for a fluid UI experience while typing) and its native support for strict JSON-mode outputs. This ensures the backend always receives a perfectly formatted dictionary instead of hallucinated conversational text.
-* **UI/UX Theme:** I built a custom "Technical Blueprint" aesthetic using pure CSS. By utilizing monospace fonts, sharp edges, and a high-contrast palette, the application feels like a professional engineering logbook rather than a generic template.
+### **Local Development**
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/swatishah946/SupportTicketSystem.git](https://github.com/swatishah946/SupportTicketSystem.git)
+   cd SupportTicketSystem
 
-## 🚀 How to Run the Project
-
-1. **Set up the Environment Variable:**
+2. **Set up the Environment Variable:**
    Create a `.env` file in the root directory of the project and add your Google Gemini API key:
    ```env
-   GEMINI_API_KEY=your_api_key_here
+     VITE_API_URL=http://localhost:8000/api
+     GEMINI_API_KEY=your_api_key_here
+     GOOGLE_CLIENT_ID=your_google_id
+     SECRET_KEY=your_secure_django_key
    ```
 
-2. **Build and Launch:**
+3. **Build and Launch:**
 Open your terminal in the root directory and run a single Docker command:
 ```bash
 docker-compose up --build
 ```
 
-
-*Note: Docker will automatically apply all Django database migrations during the build process.*
-3. **Access the App:**
-* **Frontend Interface:** Navigate to `http://localhost:5173`
-* **Backend API / Browsable DRF:** Navigate to `http://localhost:8000/api/tickets/`
