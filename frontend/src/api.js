@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL, // Adjust if running in Docker vs Localhost
+  baseURL: `${import.meta.env.VITE_API_URL}/api`, // Adjust if running in Docker vs Localhost
   headers: {
     'Content-Type': 'application/json',
   },
