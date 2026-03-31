@@ -14,7 +14,12 @@ from .llm_utils import classify_ticket, suggest_reply_draft
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
-    callback_url = "http://localhost:5173" 
+     @property
+    def callback_url(self):
+        if settings.DEBUG:
+            return "http://localhost:5173"
+        return "https://nexusdesk-support.southeastasia.cloudapp.azure.com"
+    
     client_class = OAuth2Client
 
 from rest_framework.views import APIView
