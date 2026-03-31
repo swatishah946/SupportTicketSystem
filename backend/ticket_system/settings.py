@@ -154,13 +154,6 @@ REST_FRAMEWORK = {
 }
 
 # JWT Settings
-REST_AUTH = {
-    'USE_JWT': True,
-    'JWT_AUTH_COOKIE': 'my-app-auth',
-    'JWT_AUTH_REFRESH_COOKIE': 'my-app-refresh-token',
-    'USER_DETAILS_SERIALIZER': 'tickets.serializers.UserSerializer',
-    'REGISTER_SERIALIZER': 'tickets.serializers.CustomRegisterSerializer',
-}
 
 ACCOUNT_ADAPTER = 'tickets.adapters.CustomAccountAdapter'
 
