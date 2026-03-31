@@ -7,7 +7,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
-
+from django.utils.text import slugify
+import uuid
 from .models import Ticket, TicketComment
 from .serializers import TicketSerializer, TicketCommentSerializer
 from .llm_utils import classify_ticket, suggest_reply_draft
@@ -42,10 +43,9 @@ class CreateAgentView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({"error": "User with this email already exists"}, status=status.HTTP_400_BAD_REQUEST)
             
-        username = email.split('@')[0]
-        # Ensure username isn't a duplicate
-        while User.objects.filter(username=username).exists():
-            username += "1"
+    username = slugify(email.split('@')[0])[:20]
+if User.objects.filter(username=username).exists():
+    username = f"{username}_{uuid.uuid4().hex[:6]}"
             
         user = User.objects.create_user(
             username=username,
@@ -130,11 +130,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         result = suggest_reply_draft(ticket.description, past_comments_text)
         return Response(result)
 
-    @action(detail=False, methods=['post'])
-    def classify(self, request):
-        description = request.data.get('description', '')
-        if not description:
-            return Response({"error": "Description is required"}, status=status.HTTP_400_BAD_REQUEST)
+@action(detail=False, methods=['get'])
+def stats(self, request):
+    if request.user.role != 'admin':  # Only admins
+        return Response({"error": "Admin access required"}, 
+                       status=status.HTTP_403_FORBIDDEN)
         
         result = classify_ticket(description)
         return Response(result)
