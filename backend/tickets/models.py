@@ -63,6 +63,7 @@ class Ticket(models.Model):
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)  # Auto-updates on save()
     
     # New fields
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='tickets_created', null=True, blank=True)
