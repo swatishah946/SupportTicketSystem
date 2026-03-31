@@ -202,9 +202,8 @@ SOCIALACCOUNT_PROVIDERS = {
         },
     }
 }
-
-SOCIALACCOUNT_AUTO_SIGNUP = False
-SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = "optional"
 
 
 # CORS
@@ -224,7 +223,8 @@ CSRF_TRUSTED_ORIGINS = [
 # Add these for production security
 CSRF_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_HTTPONLY = False  # Allows frontend to read CSRF token if needed
+CSRF_COOKIE_HTTPONLY = True  # Keep True - Django handles CSRF for JSON APIs
+CSRF_COOKIE_SECURE = True    # Only send over HTTPS in production
 
 # Critical for login when using a domain name
 REST_AUTH = {
