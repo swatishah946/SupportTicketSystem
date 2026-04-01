@@ -1,3 +1,4 @@
+
 from rest_framework import viewsets, filters, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -8,14 +9,21 @@ from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from dj_rest_auth.registration.views import SocialLoginView
 from django.utils.text import slugify
+from django.conf import settings
 import uuid
 from .models import Ticket, TicketComment
 from .serializers import TicketSerializer, TicketCommentSerializer
 from .llm_utils import classify_ticket, suggest_reply_draft
+from rest_framework.views import APIView
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
 
 class GoogleLogin(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
-     @property
+    
+    @property
     def callback_url(self):
         if settings.DEBUG:
             return "http://localhost:5173"
@@ -23,9 +31,6 @@ class GoogleLogin(SocialLoginView):
     
     client_class = OAuth2Client
 
-from rest_framework.views import APIView
-from django.contrib.auth import get_user_model
-User = get_user_model()
 
 class CreateAgentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -42,11 +47,11 @@ class CreateAgentView(APIView):
         
         if User.objects.filter(email=email).exists():
             return Response({"error": "User with this email already exists"}, status=status.HTTP_400_BAD_REQUEST)
-            
-    username = slugify(email.split('@')[0])[:20]
-if User.objects.filter(username=username).exists():
-    username = f"{username}_{uuid.uuid4().hex[:6]}"
-            
+        
+        username = slugify(email.split('@')[0])[:20]
+        if User.objects.filter(username=username).exists():
+            username = f"{username}_{uuid.uuid4().hex[:6]}"
+        
         user = User.objects.create_user(
             username=username,
             email=email,
@@ -54,6 +59,7 @@ if User.objects.filter(username=username).exists():
             role='support_agent'
         )
         return Response({"message": "Agent successfully created!"}, status=status.HTTP_201_CREATED)
+
 
 class TicketViewSet(viewsets.ModelViewSet):
     serializer_class = TicketSerializer
@@ -93,7 +99,7 @@ class TicketViewSet(viewsets.ModelViewSet):
         
         if not body:
             return Response({"error": "Comment body is required"}, status=status.HTTP_400_BAD_REQUEST)
-            
+        
         comment = TicketComment.objects.create(
             ticket=ticket,
             author=request.user,
@@ -103,7 +109,7 @@ class TicketViewSet(viewsets.ModelViewSet):
         if request.user.role in ['admin', 'support_agent']:
             ticket.has_unread_updates = True
             ticket.save()
-            
+        
         serializer = TicketCommentSerializer(comment)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -111,7 +117,7 @@ class TicketViewSet(viewsets.ModelViewSet):
     def suggest_reply(self, request, pk=None):
         if request.user.role not in ['admin', 'support_agent']:
             return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
-            
+        
         ticket = self.get_object()
         
         similar_tickets = Ticket.objects.filter(
@@ -124,27 +130,27 @@ class TicketViewSet(viewsets.ModelViewSet):
             comments = st.comments.filter(author__role__in=['admin', 'support_agent'])
             for c in comments:
                 past_comments.append(c.body)
-                
+        
         past_comments_text = "\n---\n".join(past_comments) if past_comments else "No past similar resolved issues found."
         
         result = suggest_reply_draft(ticket.description, past_comments_text)
         return Response(result)
 
-@action(detail=False, methods=['get'])
-def stats(self, request):
-    if request.user.role != 'admin':  # Only admins
-        return Response({"error": "Admin access required"}, 
-                       status=status.HTTP_403_FORBIDDEN)
+    @action(detail=False, methods=['post'])
+    def classify(self, request):
+        description = request.data.get('description', '')
+        if not description:
+            return Response({"error": "Description is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         result = classify_ticket(description)
         return Response(result)
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        # Only admins/agents should see stats ideally, but keeping open for now or check role
-        if request.user.role == 'customer':
-             return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-
+        if request.user.role != 'admin':  # Only admins
+            return Response({"error": "Admin access required"}, 
+                           status=status.HTTP_403_FORBIDDEN)
+        
         aggregates = Ticket.objects.aggregate(
             total_tickets=Count('id'),
             open_tickets=Count('id', filter=Q(status='open'))
@@ -167,7 +173,7 @@ def stats(self, request):
         )
         
         avg_tickets_per_day = round(daily_stats['avg_per_day'] or 0, 1)
-
+        
         return Response({
             "total_tickets": aggregates['total_tickets'] or 0,
             "open_tickets": aggregates['open_tickets'] or 0,
