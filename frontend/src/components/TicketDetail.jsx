@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api, { errorMessage } from '../api';
 import { AuthContext } from '../context/auth';
 import { Badge, SlaBadge } from './ui';
-import { CATEGORIES, label, PRIORITIES, STATUSES, timeFromNow } from '../lib/format';
+import { CATEGORIES, label, PRIORITIES, STATUSES, deadline } from '../lib/format';
 
 const EVENT_TEXT = {
     created: (e) => `created the ticket (${e.to_value})`,
@@ -318,10 +318,10 @@ const TicketDetail = () => {
                             <dt>Created</dt><dd>{when(ticket.created_at)}</dd>
                             <dt>First reply</dt>
                             <dd>{ticket.first_response_at ? when(ticket.first_response_at)
-                                : `due ${timeFromNow(ticket.first_response_due)}`}</dd>
+                                : deadline(ticket.first_response_due)}</dd>
                             <dt>Resolution</dt>
                             <dd>{ticket.resolved_at ? when(ticket.resolved_at)
-                                : `due ${timeFromNow(ticket.resolution_due)}`}</dd>
+                                : deadline(ticket.resolution_due)}</dd>
                             {ticket.csat_score && (
                                 <>
                                     <dt>Rating</dt>

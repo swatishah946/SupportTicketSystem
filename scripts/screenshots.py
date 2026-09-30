@@ -68,12 +68,17 @@ def main():
         # Customer: new ticket with duplicate warning and AI triage
         page = browser.new_context(viewport=VIEWPORT).new_page()
         login(page, base, "customer1@nexusdesk.dev")
+        # An existing open ticket the new one duplicates, so the warning is real.
+        page.request.post(f"{base}/api/tickets/", data={
+            "title": "Charged twice for my subscription",
+            "description": "I was charged two times for the Pro plan this month, please refund the extra payment.",
+        })
         page.goto(f"{base}/new")
         page.fill("input[maxlength='200']", "Charged twice this month")
         page.fill("textarea", "My card statement shows two identical charges for the Pro plan. Please refund one.")
         page.click("h2")  # blur -> classify
         page.wait_for_selector(".callout-ai", timeout=30000)
-        page.wait_for_timeout(1500)  # debounced duplicate check
+        page.wait_for_selector("text=Is this the same as one of your open tickets?", timeout=15000)
         shot(page, out, "customer-new-ticket", full_page=False)
 
         page.goto(f"{base}/dashboard")

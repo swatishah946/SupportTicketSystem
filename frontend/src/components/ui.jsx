@@ -1,5 +1,5 @@
 import React from 'react';
-import { label, timeFromNow } from '../lib/format';
+import { deadline, label } from '../lib/format';
 
 export function Badge({ kind = 'status', value }) {
     return <span className={`badge badge-${kind} badge-${kind}-${value}`}>{label(value)}</span>;
@@ -16,7 +16,7 @@ export function SlaBadge({ ticket }) {
     const state = ticket.sla_state;
     if (!state || state === 'none') return null;
     const active = ticket.status === 'open' || ticket.status === 'in_progress';
-    const due = active && ticket.resolution_due ? ` · due ${timeFromNow(ticket.resolution_due)}` : '';
+    const due = active && ticket.resolution_due ? ` · ${deadline(ticket.resolution_due)}` : '';
     return <span className={`badge badge-sla badge-sla-${state}`} title="Resolution SLA">{SLA_TEXT[state]}{due}</span>;
 }
 

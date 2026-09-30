@@ -82,27 +82,45 @@ class Command(BaseCommand):
                                        to_value=f"{ticket.category}/{ticket.priority}", created_at=created)
 
             age_h = (now - created).total_seconds() / 3600
-            if rng.random() < 0.85:
+            first_h, resolve_h = settings.SLA_POLICY_HOURS[ticket.priority]
+
+            def event(kind, at, actor=None, old="", new="", _t=ticket):
+                TicketEvent.objects.create(ticket=_t, actor=actor, kind=kind, from_value=old, to_value=new,
+                                           created_at=at)
+
+            def comment(body, author, at, _t=ticket):
+                c = TicketComment.objects.create(ticket=_t, author=author, body=body)
+                TicketComment.objects.filter(pk=c.pk).update(created_at=at)
+
+            # A realistic team: old tickets are almost always done, open work skews recent.
+            if rng.random() < (0.99 if age_h > 1 else 0.6):
                 ticket.assigned_to = rng.choice(agents)
-            if ticket.assigned_to and rng.random() < 0.8:
-                window = settings.SLA_POLICY_HOURS[ticket.priority][0]
-                response_h = min(rng.uniform(0.05, window * 1.4), age_h)
-                ticket.first_response_at = created + timedelta(hours=response_h)
-                TicketComment.objects.create(ticket=ticket, author=ticket.assigned_to,
-                                             body="Thanks for reporting this, I'm looking into it now.")
+                event(TicketEvent.Kind.ASSIGNED, created + timedelta(minutes=1), new=ticket.assigned_to.email)
+            if ticket.assigned_to and rng.random() < (0.99 if age_h > first_h else 0.5):
+                response_h = min(rng.uniform(0.05, first_h * 1.3), age_h)
+                replied = created + timedelta(hours=response_h)
+                ticket.first_response_at = replied
+                comment("Thanks for reporting this, I'm looking into it now.", ticket.assigned_to, replied)
+                event(TicketEvent.Kind.COMMENT, replied, ticket.assigned_to)
+                event(TicketEvent.Kind.STATUS, replied, ticket.assigned_to, "open", "in_progress")
                 ticket.status = Ticket.Status.IN_PROGRESS
-                if age_h > 2 and rng.random() < 0.7:
-                    resolve_h = min(rng.uniform(response_h, settings.SLA_POLICY_HOURS[ticket.priority][1] * 1.3),
-                                    age_h)
-                    ticket.resolved_at = created + timedelta(hours=resolve_h)
-                    ticket.status = rng.choice([Ticket.Status.RESOLVED, Ticket.Status.CLOSED])
+                if rng.random() < (0.96 if age_h > resolve_h else 0.4 if age_h > 2 else 0.0):
+                    done_h = min(rng.uniform(response_h, resolve_h * 1.25), age_h)
+                    done = created + timedelta(hours=done_h)
+                    ticket.resolved_at = done
+                    ticket.status = Ticket.Status.RESOLVED
                     ticket.resolution_notes = AGENT_REPLIES[ticket.category]
-                    TicketComment.objects.create(ticket=ticket, author=ticket.assigned_to,
-                                                 body=AGENT_REPLIES[ticket.category])
+                    comment(AGENT_REPLIES[ticket.category], ticket.assigned_to, done)
+                    event(TicketEvent.Kind.COMMENT, done, ticket.assigned_to)
+                    event(TicketEvent.Kind.STATUS, done, ticket.assigned_to, "in_progress", "resolved")
+                    if age_h - done_h > 48 and rng.random() < 0.6:
+                        ticket.status = Ticket.Status.CLOSED
+                        event(TicketEvent.Kind.STATUS, done + timedelta(hours=48), None, "resolved", "closed")
                     if rng.random() < 0.6:  # not every customer answers the survey
                         on_time = ticket.resolved_at <= ticket.resolution_due
                         ticket.csat_score = rng.choice([4, 5, 5] if on_time else [2, 3, 4])
-                        ticket.csat_at = ticket.resolved_at + timedelta(hours=rng.uniform(0.2, 12))
+                        ticket.csat_at = done + timedelta(hours=rng.uniform(0.2, 12))
+                        event(TicketEvent.Kind.RATED, ticket.csat_at, customer, new=f"{ticket.csat_score}/5")
             ticket.save()
             Ticket.objects.filter(pk=ticket.pk).update(created_at=created)
 

@@ -14,6 +14,13 @@ export function timeFromNow(iso) {
     return diffMin >= 0 ? `in ${text}` : `${text} ago`;
 }
 
+/** Deadline wording: "due in 3h" before it, "overdue 2d" after it. */
+export function deadline(iso) {
+    if (!iso) return '';
+    const text = timeFromNow(iso);
+    return text.startsWith('in ') ? `due ${text}` : `overdue ${text.replace(' ago', '')}`;
+}
+
 export function formatMinutes(minutes) {
     if (minutes === null || minutes === undefined) return '—';
     if (minutes < 60) return `${Math.round(minutes)}m`;
