@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexus" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgres://nexus:nexus@localhost:5432/nexus_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Migrations are up to date
+        run: DEBUG=True python manage.py makemigrations --check --dry-run
+      - name: Production settings check
+        run: SECRET_KEY=ci-only DEBUG=False HTTPS=True python manage.py check --deploy --fail-level WARNING
+      - name: Tests (Postgres) with coverage
+        run: python -m pytest --cov --cov-report=term --cov-report=xml --cov-fail-under=90
+      - name: Offline AI evaluation (rule-based baseline + lexical retrieval)
+        run: python evals/run_eval.py
+      - name: API benchmark (SQLite, 500 tickets)
+        run: python benchmarks/bench_api.py --tickets 500 --runs 20
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production images
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci/' .env
+          docker compose -f docker-compose.prod.yml build
+      - name: Boot the stack and hit the health checks
+        run: |
+          sed -i 's/^SECRET_KEY=.*/SECRET_KEY=ci-secret-key-0123456789/' .env
+          docker compose -f docker-compose.prod.yml up -d
+          for i in $(seq 1 30); do curl -fs http://localhost/api/health/ && break; sleep 3; done
+          curl -fs http://localhost/api/health/
+          curl -fs http://localhost/ | grep -q '<div id="root">'
+      - if: always()
+        run: docker compose -f docker-compose.prod.yml logs --tail 100

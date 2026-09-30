@@ -1,8 +1,8 @@
 import React, { useState, useContext } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../api';
-import { AuthContext } from '../context/AuthContext';
+import api, { errorMessage } from '../api';
+import { AuthContext, homeFor } from '../context/auth';
 
 function LoginPage() {
     const navigate = useNavigate();
@@ -11,24 +11,21 @@ function LoginPage() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
 
+    // The backend sets httpOnly auth cookies; we only keep the user profile.
+    const finishLogin = (user) => {
+        login(user);
+        navigate(homeFor(user.role));
+    };
+
     const handleGoogleSuccess = async (credentialResponse) => {
         try {
             const res = await api.post('/auth/google/', {
                 access_token: credentialResponse.credential,
                 id_token: credentialResponse.credential
             });
-            const { access, refresh, user } = res.data;
-            login(user, access, refresh);
-            if (user.role === 'admin') {
-                navigate('/admin');
-            } else if (user.role === 'support_agent') {
-                navigate('/agent');
-            } else {
-                navigate('/dashboard');
-            }
-        } catch (error) {
-            console.error('Google Login failed', error);
-            setError('Google Login Failed');
+            finishLogin(res.data.user);
+        } catch (err) {
+            setError(errorMessage(err, 'Google login failed.'));
         }
     };
 
@@ -36,34 +33,10 @@ function LoginPage() {
         e.preventDefault();
         setError('');
         try {
-            const res = await api.post('/auth/login/', {
-                email,
-                password
-            });
-            const { access, refresh, user } = res.data;
-            login(user, access, refresh);
-            if (user.role === 'admin') {
-                navigate('/admin');
-            } else if (user.role === 'support_agent') {
-                navigate('/agent');
-            } else {
-                navigate('/dashboard');
-            }
+            const res = await api.post('/auth/login/', { email, password });
+            finishLogin(res.data.user);
         } catch (err) {
-            console.error('Login failed', err);
-            if (err.response && err.response.data) {
-                const data = err.response.data;
-                if (data.non_field_errors) {
-                    setError(data.non_field_errors.join(' '));
-                } else if (typeof data === 'string') {
-                    setError('A server error occurred.');
-                } else {
-                    const errorMessages = Object.values(data).flat().join(' | ');
-                    setError(errorMessages || 'Invalid credentials.');
-                }
-            } else {
-                setError('Network error or server unreachable.');
-            }
+            setError(errorMessage(err, 'Invalid credentials.'));
         }
     };
 

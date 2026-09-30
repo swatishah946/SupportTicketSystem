@@ -16,7 +16,7 @@ import RootRedirect from './components/RootRedirect';
 import { AuthProvider } from './context/AuthContext';
 
 function App() {
-  const GOOGLE_CLIENT_ID = import.meta.env.VITE_OAUTH || "YOUR_GOOGLE_CLIENT_ID_HERE";
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.VITE_OAUTH || "";
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
@@ -62,7 +62,10 @@ function App() {
               path="/tickets"
               element={
                 <ProtectedRoute allowedRoles={['admin', 'support_agent', 'customer']}>
-                  <TicketList />
+                  <div className="page">
+                    <div className="page-head"><h1>Tickets</h1></div>
+                    <TicketList />
+                  </div>
                 </ProtectedRoute>
               }
             />

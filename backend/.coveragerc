@@ -1,0 +1,10 @@
+[run]
+source = tickets
+omit =
+    tickets/migrations/*
+    tickets/admin.py
+    tickets/apps.py
+
+[report]
+show_missing = True
+skip_covered = True

@@ -1,187 +1,108 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { AuthContext } from '../context/AuthContext';
+import { AuthContext } from '../context/auth';
+import { Badge, Pager, SlaBadge } from './ui';
+import { CATEGORIES, label, PRIORITIES, STATUSES } from '../lib/format';
 
-const TicketList = ({ splitByAssignment = false }) => {
-    const { user } = useContext(AuthContext);
+const PAGE_SIZE = 12;
+
+function TicketCard({ ticket, isCustomer }) {
     const navigate = useNavigate();
-    const [tickets, setTickets] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState('All Statuses');
-    const [priorityFilter, setPriorityFilter] = useState('All Priorities');
+    const text = ticket.description.length > 110 ? `${ticket.description.slice(0, 110)}…` : ticket.description;
+    return (
+        <div className="ticket-card" onClick={() => navigate(`/tickets/${ticket.id}`)}>
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+                <h4>#{ticket.id} {ticket.title}</h4>
+                <Badge value={ticket.status} />
+            </div>
+            <div className="row">
+                <Badge kind="priority" value={ticket.priority} />
+                <SlaBadge ticket={ticket} />
+                {ticket.escalated && <span className="badge badge-sla-breached">Escalated</span>}
+                {isCustomer && ticket.has_unread_updates && <span className="badge badge-new">New reply</span>}
+            </div>
+            <p>{text}</p>
+            <div className="meta">
+                <span>{label(ticket.category)} · {ticket.comment_count} repl{ticket.comment_count === 1 ? 'y' : 'ies'}</span>
+                <span>{ticket.assigned_to ? `@${ticket.assigned_to.username}` : 'Unassigned'}</span>
+            </div>
+        </div>
+    );
+}
 
-    const fetchTickets = async () => {
-        setLoading(true);
-        try {
-            const response = await api.get('/tickets/');
-            setTickets(response.data);
-        } catch (error) {
-            console.error("Failed to fetch tickets", error);
-        } finally {
-            setLoading(false);
-        }
-    };
+/**
+ * Server-driven ticket list. `preset` holds fixed query params for a queue
+ * (e.g. {assigned_to: 'me', active: true}); filters are added on top of it.
+ */
+const TicketList = ({ preset = {}, showFilters = true, emptyText = 'No tickets match your filters.' }) => {
+    const { user } = useContext(AuthContext);
+    const [response, setResponse] = useState({ key: null, data: { results: [], count: 0 }, error: '' });
+    const [page, setPage] = useState(1);
+    const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [filters, setFilters] = useState({ status: '', priority: '', category: '' });
 
-    // Force fetch on mount
+    // Everything that defines the request, as one stable key.
+    const requestKey = JSON.stringify({ ...preset, ...filters, search: debouncedSearch, page, page_size: PAGE_SIZE });
+    const loading = response.key !== requestKey;
+    const { data, error } = response;
+
     useEffect(() => {
-        fetchTickets();
-    }, []);
+        const t = setTimeout(() => {
+            setDebouncedSearch(search.trim());
+            setPage(1);
+        }, 300);
+        return () => clearTimeout(t);
+    }, [search]);
 
-    // Expose refresh method to parent if needed, or just auto-refresh on props change
-    // For now, simple internal state.
+    useEffect(() => {
+        let cancelled = false;
+        const params = Object.fromEntries(Object.entries(JSON.parse(requestKey)).filter(([, v]) => v !== ''));
+        api.get('/tickets/', { params })
+            .then((res) => { if (!cancelled) setResponse({ key: requestKey, data: res.data, error: '' }); })
+            .catch(() => {
+                if (!cancelled) setResponse((r) => ({ ...r, key: requestKey, error: 'Failed to load tickets.' }));
+            });
+        return () => { cancelled = true; };
+    }, [requestKey]);
 
-    const filteredTickets = tickets.filter(ticket => {
-        const matchesSearch = searchTerm === '' ||
-            (ticket.title && ticket.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
-            (ticket.description && ticket.description.toLowerCase().includes(searchTerm.toLowerCase()));
-
-        const matchesStatus = statusFilter === 'All Statuses' || ticket.status === statusFilter;
-        const matchesPriority = priorityFilter === 'All Priorities' || ticket.priority === priorityFilter;
-
-        return matchesSearch && matchesStatus && matchesPriority;
-    });
+    const setFilter = (key) => (e) => {
+        setFilters((f) => ({ ...f, [key]: e.target.value }));
+        setPage(1);
+    };
 
     return (
         <div>
-            <div className="card" style={{ marginBottom: '20px', padding: '15px', border: '2px solid black', fontFamily: 'monospace', backgroundColor: 'white' }}>
-                <h3 style={{ textTransform: 'uppercase', marginTop: 0 }}>Filters</h3>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <input
-                        placeholder="Search..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        style={{ padding: '10px', border: '2px solid black', fontFamily: 'monospace' }}
-                    />
-                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '10px', border: '2px solid black', fontFamily: 'monospace' }}>
-                        <option value="All Statuses">All Statuses</option>
-                        <option value="open">Open</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="resolved">Resolved</option>
-                        <option value="closed">Closed</option>
+            {showFilters && (
+                <div className="filters">
+                    <input placeholder="Search title or description…" value={search}
+                           onChange={(e) => setSearch(e.target.value)} />
+                    <select value={filters.status} onChange={setFilter('status')}>
+                        <option value="">All statuses</option>
+                        {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
                     </select>
-                    <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} style={{ padding: '10px', border: '2px solid black', fontFamily: 'monospace' }}>
-                        <option value="All Priorities">All Priorities</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="critical">Critical</option>
+                    <select value={filters.priority} onChange={setFilter('priority')}>
+                        <option value="">All priorities</option>
+                        {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
-                </div>
-            </div>
-
-            {loading ? (
-                <p style={{ fontFamily: 'monospace' }}>Loading tickets...</p>
-            ) : splitByAssignment ? (
-                <>
-                    <h3 style={{ textTransform: 'uppercase', borderBottom: '2px dashed black', paddingBottom: '10px', marginTop: '30px' }}>Unassigned Queue</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem', marginBottom: '30px' }}>
-                        {filteredTickets.filter(t => !t.assigned_to).length === 0 ? (
-                            <p style={{ padding: '20px', border: '2px solid black', backgroundColor: '#f9f9f9', fontFamily: 'monospace', fontWeight: 'bold', gridColumn: '1 / -1' }}>No unassigned tickets found.</p>
-                        ) : (
-                            filteredTickets.filter(t => !t.assigned_to).map(ticket => (
-                                <div key={ticket.id} style={{ cursor: 'pointer', padding: '15px', border: '2px solid black', boxShadow: '4px 4px 0px black', backgroundColor: 'white', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }} onClick={() => navigate(`/tickets/${ticket.id}`)}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                                            <h4 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase' }}>#{ticket.id} {ticket.title}</h4>
-                                            {ticket.has_unread_updates && user?.role === 'customer' && (
-                                                <span style={{ padding: '2px 8px', backgroundColor: '#d32f2f', color: 'white', fontWeight: 'bold', fontSize: '0.7rem', marginLeft: '10px', whiteSpace: 'nowrap' }}>🔴 NEW UPDATE</span>
-                                            )}
-                                        </div>
-                                        <span style={{ padding: '5px 10px', backgroundColor: 'black', color: 'white', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '10px' }}>{ticket.status}</span>
-                                    </div>
-                                    <p style={{ margin: '15px 0', flexGrow: 1 }}>{ticket.description.length > 100 ? ticket.description.substring(0, 100) + '...' : ticket.description}</p>
-                                    {ticket.comments && ticket.comments.length > 0 && (
-                                        <div style={{ fontSize: '0.8rem', padding: '5px', backgroundColor: '#e0e0e0', border: '1px solid black', marginBottom: '10px', fontWeight: 'bold' }}>✓ CONVERSATION ACTIVE ({ticket.comments.length})</div>
-                                    )}
-                                    <div style={{ borderTop: '2px dashed black', paddingTop: '10px', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between' }}>
-                                        <span><strong>Cat:</strong> {ticket.category} | <strong>Pri:</strong> {ticket.priority}</span>
-                                        <span>{new Date(ticket.created_at).toLocaleDateString()}</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-
-                    <h3 style={{ textTransform: 'uppercase', borderBottom: '2px dashed black', paddingBottom: '10px' }}>My Active Tickets</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem', marginBottom: '30px' }}>
-                        {filteredTickets.filter(t => t.assigned_to && t.assigned_to.id === user?.id).length === 0 ? (
-                            <p style={{ padding: '20px', border: '2px solid black', backgroundColor: '#f9f9f9', fontFamily: 'monospace', fontWeight: 'bold', gridColumn: '1 / -1' }}>You have no active tickets assigned.</p>
-                        ) : (
-                            filteredTickets.filter(t => t.assigned_to && t.assigned_to.id === user?.id).map(ticket => (
-                                <div key={ticket.id} style={{ cursor: 'pointer', padding: '15px', border: '2px solid black', boxShadow: '4px 4px 0px black', backgroundColor: 'white', fontFamily: 'monospace', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }} onClick={() => navigate(`/tickets/${ticket.id}`)}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                                            <h4 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase' }}>#{ticket.id} {ticket.title}</h4>
-                                            {ticket.has_unread_updates && user?.role === 'customer' && (
-                                                <span style={{ padding: '2px 8px', backgroundColor: '#d32f2f', color: 'white', fontWeight: 'bold', fontSize: '0.7rem', marginLeft: '10px', whiteSpace: 'nowrap' }}>🔴 NEW UPDATE</span>
-                                            )}
-                                        </div>
-                                        <span style={{ padding: '5px 10px', backgroundColor: 'black', color: 'white', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '10px' }}>{ticket.status}</span>
-                                    </div>
-                                    <p style={{ margin: '15px 0', flexGrow: 1 }}>{ticket.description.length > 100 ? ticket.description.substring(0, 100) + '...' : ticket.description}</p>
-                                    {ticket.comments && ticket.comments.length > 0 && (
-                                        <div style={{ fontSize: '0.8rem', padding: '5px', backgroundColor: '#e0e0e0', border: '1px solid black', marginBottom: '10px', fontWeight: 'bold' }}>✓ CONVERSATION ACTIVE ({ticket.comments.length})</div>
-                                    )}
-                                    <div style={{ borderTop: '2px dashed black', paddingTop: '10px', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between' }}>
-                                        <span><strong>Cat:</strong> {ticket.category} | <strong>Pri:</strong> {ticket.priority}</span>
-                                        <span>{new Date(ticket.created_at).toLocaleDateString()}</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </>
-            ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
-                    {filteredTickets.length === 0 ? (
-                        <p style={{ padding: '20px', border: '2px solid black', backgroundColor: '#f9f9f9', fontFamily: 'monospace', fontWeight: 'bold', gridColumn: '1 / -1' }}>
-                            No tickets match your filters.
-                        </p>
-                    ) : (
-                        filteredTickets.map(ticket => (
-                            <div
-                                key={ticket.id}
-                                style={{
-                                    cursor: 'pointer',
-                                    padding: '15px',
-                                    border: '2px solid black',
-                                    boxShadow: '4px 4px 0px black',
-                                    backgroundColor: 'white',
-                                    fontFamily: 'monospace',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    justifyContent: 'space-between'
-                                }}
-                                onClick={() => navigate(`/tickets/${ticket.id}`)}
-                            >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                                        <h4 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase' }}>#{ticket.id} {ticket.title}</h4>
-                                        {ticket.has_unread_updates && user?.role === 'customer' && (
-                                            <span style={{ padding: '2px 8px', backgroundColor: '#d32f2f', color: 'white', fontWeight: 'bold', fontSize: '0.7rem', marginLeft: '10px', whiteSpace: 'nowrap' }}>🔴 NEW UPDATE</span>
-                                        )}
-                                    </div>
-                                    <span style={{ padding: '5px 10px', backgroundColor: 'black', color: 'white', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.8rem', whiteSpace: 'nowrap', marginLeft: '10px' }}>{ticket.status}</span>
-                                </div>
-                                <p style={{ margin: '15px 0', flexGrow: 1 }}>{ticket.description.length > 100 ? ticket.description.substring(0, 100) + '...' : ticket.description}</p>
-
-                                {ticket.comments && ticket.comments.length > 0 && (
-                                    <div style={{ fontSize: '0.8rem', padding: '5px', backgroundColor: '#e0e0e0', border: '1px solid black', marginBottom: '10px', fontWeight: 'bold' }}>
-                                        ✓ CONVERSATION ACTIVE ({ticket.comments.length})
-                                    </div>
-                                )}
-
-                                <div style={{ borderTop: '2px dashed black', paddingTop: '10px', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between' }}>
-                                    <span><strong>Cat:</strong> {ticket.category} | <strong>Pri:</strong> {ticket.priority}</span>
-                                    <span>{new Date(ticket.created_at).toLocaleDateString()}</span>
-                                </div>
-                            </div>
-                        ))
-                    )}
+                    <select value={filters.category} onChange={setFilter('category')}>
+                        <option value="">All categories</option>
+                        {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
                 </div>
             )}
+            {error && <p className="error">{error}</p>}
+            {loading && !data.results.length ? (
+                <p>Loading tickets…</p>
+            ) : data.results.length === 0 ? (
+                <p className="empty">{emptyText}</p>
+            ) : (
+                <div className="ticket-grid" style={{ opacity: loading ? 0.6 : 1 }}>
+                    {data.results.map((t) => <TicketCard key={t.id} ticket={t} isCustomer={user?.role === 'customer'} />)}
+                </div>
+            )}
+            <Pager page={page} count={data.count} pageSize={PAGE_SIZE} onChange={setPage} />
         </div>
     );
 };

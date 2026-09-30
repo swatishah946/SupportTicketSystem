@@ -1,0 +1,53 @@
+{
+  "database": "postgresql",
+  "tickets_in_db": 2000,
+  "list_page_20": {
+    "p50_ms": 23.3,
+    "p95_ms": 26.7,
+    "queries": [
+      2
+    ]
+  },
+  "list_page_100": {
+    "p50_ms": 33.9,
+    "p95_ms": 48.0,
+    "queries": [
+      2
+    ]
+  },
+  "list_filtered_breached": {
+    "p50_ms": 16.9,
+    "p95_ms": 21.6,
+    "queries": [
+      2
+    ]
+  },
+  "detail": {
+    "p50_ms": 9.3,
+    "p95_ms": 13.6,
+    "queries": [
+      3
+    ]
+  },
+  "analytics": {
+    "p50_ms": 18.5,
+    "p95_ms": 23.6,
+    "queries": [
+      6
+    ]
+  },
+  "similar_1000_candidates": {
+    "p50_ms": 54.6,
+    "p95_ms": 101.4,
+    "queries": [
+      1
+    ]
+  },
+  "create_ticket": {
+    "p50_ms": 17.2,
+    "p95_ms": 23.8,
+    "queries": [
+      10
+    ]
+  }
+}

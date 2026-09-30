@@ -1,36 +1,62 @@
-version: '3.8'
-
+# Production-style stack: nginx (SPA + reverse proxy) -> gunicorn/Django -> Postgres,
+# plus Redis for the shared cache/throttling and a scheduler for SLA escalation.
+#   cp .env.example .env   # set SECRET_KEY, POSTGRES_PASSWORD, ALLOWED_HOSTS, ...
+#   docker compose -f docker-compose.prod.yml up -d --build
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ticket_db
-      POSTGRES_USER: ticket_user
-      POSTGRES_PASSWORD: ticket_password
+      POSTGRES_DB: ${POSTGRES_DB:-nexusdesk}
+      POSTGRES_USER: ${POSTGRES_USER:-nexusdesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
     restart: unless-stopped
 
-  backend:
-    build:
-      context: ./backend
-      dockerfile: ../Dockerfile.backend
-    command: gunicorn ticket_system.wsgi:application --bind 0.0.0.0:8000
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  backend: &backend
+    build: ./backend
+    env_file: .env
     environment:
-      - DATABASE_URL=postgres://ticket_user:ticket_password@db:5432/ticket_db
+      DEBUG: "False"
+      DATABASE_URL: postgres://${POSTGRES_USER:-nexusdesk}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nexusdesk}
+      REDIS_URL: redis://redis:6379/0
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
 
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-    ports:
-      - "80:80"
+  # Escalates tickets that breach their SLA, every 5 minutes.
+  scheduler:
+    <<: *backend
+    command: sh -c "while true; do python manage.py escalate_overdue; sleep 300; done"
+    healthcheck:
+      disable: true
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      target: prod
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  postgres_data_prod:
+  postgres_data:

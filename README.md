@@ -1,180 +1,183 @@
-# 🎫 NexusDesk: AI-Powered Support Ticketing System
+# NexusDesk
 
-**Status:** 🔴 Offline (Previously deployed on Microsoft Azure)
-> **Note:** The live production environment (hosted via Azure VM & DNS) was spun down to conserve cloud credits. The complete Dockerized deployment architecture, including Nginx configurations, is fully documented below and reproducible locally.
+**An AI-assisted helpdesk with SLA enforcement, automatic routing and retrieval-grounded reply drafting.**
+Django REST · React · PostgreSQL · Redis · Gemini · Docker
 
-NexusDesk is a professional-grade, full-stack support platform built to bridge the gap between customers and support teams. It features a robust **Django REST API**, a high-performance **React (Vite)** frontend, and is fully containerized with **Docker** for cloud-native deployment on **Microsoft Azure**.
+[![CI](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml)
 
-## 📸 Project Gallery
+NexusDesk covers the full life of a support ticket. A customer describes a problem and
+is warned if they have already reported it. The ticket is triaged and routed to the
+least-busy agent, with an SLA clock running from the moment it is created. The agent
+drafts a reply with an AI copilot that cites similar tickets the team has already
+solved. Every change is recorded in an audit trail, and anything past its SLA is
+escalated automatically.
 
-![Dashboard Screenshot](./screenshots/dashboard.png)
-*Stats Dashboard rendering DB-aggregated metrics from PostgreSQL.*
+## Measured results
 
-![Create Ticket Screenshot](./screenshots/create_ticket.png)
-*Ticket Creation form with LLM-powered auto-suggestions (Gemini) running in the background.*
+Every number below is reproducible from this repository. See `backend/evals/` and `backend/benchmarks/`.
 
-## 🛠️ Tech Stack & Infrastructure
+| Area | Result | How it was measured |
+|---|---|---|
+| Tests | **63 tests, 96% line coverage**, green on SQLite and PostgreSQL 16 | `pytest --cov` (CI enforces ≥ 90%) |
+| Query efficiency | Ticket list: **2 SQL queries per request at any page size** (was ~6 per ticket: 303 queries for 51 tickets) | query-count regression tests; the "before" figure was measured on the original code |
+| API latency (2,000 tickets, PostgreSQL) | list p95 **27 ms**, detail p95 **14 ms**, analytics p95 **24 ms** | `benchmarks/bench_api.py`, in-process, 50 runs each |
+| Load test (gunicorn, 3 workers, Postgres and load generator on the same 2 vCPU machine) | 50 concurrent agents, **1,762 requests, 0 errors**, steady-state endpoints p95 **28–40 ms** | Locust, 60 s (`benchmarks/loadtest-stats.csv`) |
+| AI triage (rule-based fallback) | category accuracy **83.3%** (macro-F1 0.84), priority within one level **94.8%** | 96 labelled tickets (`evals/`) |
+| Duplicate detection (lexical) | **6.2% false-positive rate** at the shipped threshold, hit@3 66.7% | leave-intent-out evaluation (`evals/`) |
 
-I containerized the entire application using **Docker & Docker Compose** to ensure seamless transitions between development and production.
+The load-test login p50 was 7.6 s. That comes from Django's deliberately slow password
+hashing (≈0.6 s per hash, 10⁶ PBKDF2 iterations) with 50 logins arriving at once on
+2 CPUs, not from the API. A single login takes about 0.6 s. The LLM and hybrid-retrieval
+numbers need an API key: run `python evals/run_eval.py --classifier llm --retriever hybrid`.
 
-* **Backend:** Django 5.x, Django REST Framework (DRF), WhiteNoise (Static Files)
-* **Frontend:** React 18+ (Vite), Axios, CSS (Custom Blueprint Theme)
-* **Database:** PostgreSQL (Production), SQLite (Development)
-* **AI Integration:** Google Gemini 2.5 Flash via the `google-genai` SDK
-* **Cloud & DevOps:** Microsoft Azure (Ubuntu VM), Azure DNS, Nginx, Google OAuth2
+## Features
 
-### 🏗️ Deployment Architecture
-```text
-Client Request ➔ Azure DNS ➔ Nginx (Reverse Proxy) ➔ Docker Compose Network
-                                                        ├── ⚙️ Django API (Backend)
-                                                        ├── ⚛️ Vite (Frontend)
-                                                        └── 🗄️ PostgreSQL (Database)
+**For customers**
+- Live duplicate detection while typing ("is this the same as ticket #42?")
+- AI triage fills in category and priority, and the customer can override it
+- Replying to a resolved ticket reopens it automatically
+
+**For agents**
+- Personal queue sorted by SLA deadline, plus unassigned and breaching views
+- **AI copilot**: drafts a reply grounded in the most similar *resolved* tickets (RAG) and shows which ones it used
+- Internal notes, hidden from customers at the query level (not just in the UI)
+- Reassignment, priority and category changes, duplicate marking, resolution notes
+
+**For admins**
+- Analytics: SLA compliance, average first response and resolution time, and 14-day volume
+- **AI quality metric**: how often agents keep the AI's category or priority (measured on real usage)
+- Agent workload table (active tickets, breaches, resolved in the last 7 days) and agent onboarding
+- OpenAPI docs at `/api/docs/`
+
+**Platform**
+- SLA engine: per-priority first-response and resolution deadlines, with live state (on track, at risk, breached, met)
+- Least-loaded auto-assignment, computed in one aggregate query
+- Scheduled escalation that bumps the priority of overdue tickets (idempotent, audited)
+- Append-only audit trail of every status, priority, assignment and duplicate change
+- Status state machine (a closed ticket can only be reopened, never silently "resolved")
+
+## Architecture
+
+```mermaid
+flowchart LR
+    B[Browser<br/>React SPA] -->|same origin, httpOnly JWT cookies| N[nginx<br/>static SPA + reverse proxy]
+    N -->|/api /admin| G[gunicorn<br/>Django REST]
+    G --> P[(PostgreSQL)]
+    G --> R[(Redis<br/>cache + throttling)]
+    G -.->|classify, embed, draft<br/>12 s timeout, cached| AI[Gemini API]
+    S[scheduler<br/>escalate_overdue every 5 min] --> P
 ```
 
-## ✨ Core Features
+The backend keeps HTTP handling and business rules apart:
 
-1. **AI Support Agent & Smart Categorization:** When a user describes a problem, the integrated **Gemini AI Support Agent** analyzes the text in real-time. It doesn't just categorize the ticket; it acts as a first-line responder by generating helpful, context-aware solution suggestions and pre-filling technical metadata like Priority and Category.
-2. **Google OAuth2 Authentication:** Secure, one-tap login for users, fully configured for production environments via Azure DNS mapping.
-3. **Role-Based Access Control (RBAC):** Custom `AccountAdapter` logic directs users to specific interfaces; Staff are routed to the **Admin Management Panel**, while users go to the **Customer Dashboard**.
-4. **Database-Level Performance:** Dashboard statistics utilize Django ORM's `aggregate` and `annotate` functions to push heavy computations to PostgreSQL for maximum efficiency.
-5. **Professional Cloud Deployment:** Hosted on an Azure Virtual Machine with a dedicated DNS label, ensuring a stable and professional public endpoint.
+```
+backend/tickets/
+├── views.py            thin HTTP layer: auth, validation, query shaping
+├── services/
+│   ├── workflow.py     every write: role permissions, state machine, SLA timestamps, audit events
+│   ├── sla.py          deadlines, live SLA state, breach filter
+│   ├── assignment.py   least-loaded agent
+│   ├── search.py       TF-IDF cosine retrieval, hybrid with embeddings
+│   ├── ai.py           Gemini: structured output, validation, caching, fallbacks
+│   └── rules.py        deterministic fallback classifier (and the eval baseline)
+├── management/commands/  escalate_overdue, seed_demo
+backend/tests/          63 tests: permissions matrix, workflow, SLA, AI, retrieval, performance
+backend/evals/          labelled dataset + evaluation harness
+backend/benchmarks/     query/latency benchmark, Locust load test
+```
 
-## 🧠 Design Decisions: The AI Agent Logic
+## Design decisions
 
-For the AI integration, I chose **Google's Gemini 2.5 Flash**. I specifically selected it because:
+**AI that degrades instead of breaking.**
+- Every LLM call has a hard timeout and a deterministic fallback. Without a key, or during
+  an outage, triage uses the rule-based classifier and the copilot returns the best-matching
+  past resolution. The product keeps working either way.
+- Outputs use Gemini structured output with enum schemas and are validated again
+  server-side, so the model cannot write an unknown category or status to the database.
+- User text is passed as delimited, untrusted data, which hardens against prompt injection.
+- Classification and embeddings are cached by content hash, and AI endpoints are rate-limited per user.
 
-* **Inference Speed:** Crucial for a fluid UI experience where the "Support Agent" provides suggestions while the user is still interacting with the form.
-* **Instruction Following:** It natively supports strict JSON-mode outputs, ensuring the backend always receives a structured dictionary of categories and agent responses rather than messy conversational text.
-* **Graceful Degradation:** If the AI service is unreachable, the system automatically falls back to manual entry mode, ensuring the core ticketing service remains 100% available.
+**Measure the AI, don't assume it.**
+- The ticket stores the AI's original suggestion next to the final, human-edited values.
+  That gives a live accuracy signal from real usage (the share of tickets where agents kept
+  the AI's category and priority, shown on the admin dashboard) on top of the offline eval set.
 
-## 🐳 Docker & Containerization
+**Retrieval that is honest about its limits.**
+- Lexical TF-IDF needs no model, is deterministic and is unit-tested, but it misses paraphrases.
+- With Gemini embeddings, scores become a 70/30 semantic/lexical blend.
+- The duplicate threshold is chosen from a precision/recall sweep, not guessed. A false
+  "you already reported this" is worse than a missed one.
 
-**Why Docker?** Consistent environments across development and production with multi-service orchestration.
+**Security by construction.**
+- Permissions are enforced per field in one place (`workflow.EDITABLE_FIELDS`): customers
+  can edit or close only their own open tickets, and cannot touch priority, status or
+  assignment.
+- Role and email are read-only on the profile endpoint.
+- JWTs live in httpOnly, SameSite cookies, so JavaScript never sees a token. Access tokens
+  last 15 minutes, with rotating refresh tokens that are blacklisted after use.
+- In production the SPA and API share one origin behind nginx, so no CORS or
+  third-party cookies are needed.
+- `manage.py check --deploy` passes with zero warnings in CI (HSTS, secure cookies, SSL redirect).
 
-### Services
-- **PostgreSQL:** Database (port 5432, internal only)
-- **Django Backend:** API server (port 8000, proxied through Nginx)
-- **React Frontend:** Vite dev server (port 5173)
-- **Nginx:** Reverse proxy, SSL/TLS termination (ports 80/443)
+**Performance.**
+- List endpoints annotate comment counts and use `select_related`. Detail views prefetch
+  only what the caller may see.
+- Tests assert that the query count stays constant as data grows, so an N+1 regression fails CI.
+- Composite indexes cover the hot filters (status + priority, assignee + status, SLA deadline).
 
-### Docker Compose Commands
+## Running it
+
+**Docker (recommended)**
 ```bash
-docker-compose up --build           # Start all services
-docker-compose down                 # Stop services
-docker-compose logs -f              # View logs
-docker-compose exec backend python manage.py migrate  # Run migrations
+cp .env.example .env                       # add GEMINI_API_KEY for the LLM features (optional)
+docker compose up --build                  # dev: http://localhost:5173 (hot reload)
+docker compose exec backend python manage.py seed_demo   # demo users + 120 tickets
 ```
+Demo logins (password `NexusDemo!2026`): `admin@nexusdesk.dev`, `agent1@nexusdesk.dev`, `customer1@nexusdesk.dev`.
 
-## ☁️ Azure Cloud Deployment
-
-**VM Configuration:**
-- Image: Ubuntu 22.04 LTS
-- Region: Southeast Asia
-- DNS: nexusdesk-support.southeastasia.cloudapp.azure.com
-- Network Security: SSH (port 22), HTTP (port 80), HTTPS (port 443)
-
-**Quick Deploy:**
+**Production-style stack** (nginx + gunicorn + Postgres + Redis + scheduler):
 ```bash
-# SSH into VM
-ssh azureuser@nexusdesk-support.southeastasia.cloudapp.azure.com
-
-# Clone and deploy
-git clone https://github.com/swatishah946/SupportTicketSystem.git
-cd SupportTicketSystem
-cp .env.example .env  # Edit with production values
-sudo docker-compose up -d
+docker compose -f docker-compose.prod.yml up -d --build   # http://localhost
 ```
 
-## 🔄 Nginx Reverse Proxy
-
-**Key Features:**
-- SSL/TLS termination with automatic HTTPS redirect
-- Load balancing across backend/frontend services
-- Gzip compression for static assets
-- Security headers (HSTS, X-Frame-Options, etc.)
-- Request timeouts optimized for AI API calls
-
-```nginx
-# Backend API proxy (with AI request timeout)
-location /api/ {
-    proxy_pass http://backend;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 30s;
-}
-
-# Static files caching (30 days)
-location /static/ {
-    proxy_pass http://backend;
-    expires 30d;
-}
-```
-
-## 🚀 Installation & Setup
-
-### **Local Development**
-
-1. **Clone the repository:**
+**Without Docker**
 ```bash
-git clone https://github.com/swatishah946/SupportTicketSystem.git
-cd SupportTicketSystem
+cd backend && pip install -r requirements-dev.txt
+DEBUG=True python manage.py migrate && DEBUG=True python manage.py seed_demo
+DEBUG=True python manage.py runserver
+cd ../frontend && npm ci && npm run dev    # proxies /api to :8000
 ```
 
-2. **Set up the Environment Variables:**
-Create a `.env` file in the root directory of the project and populate it with your API keys and Django secrets:
-
-```env
-VITE_API_URL=http://localhost:8000/api
-GEMINI_API_KEY=your_api_key_here
-GOOGLE_CLIENT_ID=your_google_id
-SECRET_KEY=your_secure_django_key
-```
-
-3. **Build and Launch:**
-Open your terminal in the root directory and run a single Docker command:
-
+**Quality checks**
 ```bash
-docker-compose up --build
+cd backend
+pytest --cov                               # tests + coverage
+python evals/run_eval.py                   # AI evaluation
+python benchmarks/bench_api.py             # query counts + latency
+cd ../frontend && npm run lint && npm run build
 ```
 
-4. **Run Migrations:**
-```bash
-docker-compose exec backend python manage.py migrate
-docker-compose exec backend python manage.py createsuperuser
-```
+## API overview
 
-5. **Access the Application:**
-- Frontend: http://localhost:3000
-- API: http://localhost:8000/api
-- Admin Panel: http://localhost:8000/admin
+Full interactive docs are at `/api/docs/`.
 
-## 🔐 Security
+| Endpoint | Who | Purpose |
+|---|---|---|
+| `GET /api/tickets/` | all (scoped) | paginated list. Filters: `status`, `priority`, `category`, `assigned_to=me`, `unassigned`, `sla_breached`, `active`, `search`, `ordering` |
+| `POST /api/tickets/` | all | create. Triage, SLA, auto-assignment and embedding happen here |
+| `PATCH /api/tickets/:id/` | role-dependent | field-level permissions and a status state machine |
+| `POST /api/tickets/:id/comments/` | all (`is_internal` staff only) | reply or internal note |
+| `POST /api/tickets/classify/` | all, rate-limited | AI triage suggestion |
+| `POST /api/tickets/similar/` | all (scoped) | duplicate candidates |
+| `POST /api/tickets/:id/suggest_reply/` | staff, rate-limited | grounded reply draft with sources |
+| `GET /api/analytics/` | admin | SLA, AI-agreement, volume, workload |
+| `GET /api/health/` | public | liveness + DB check |
 
-✅ SSL/TLS encryption via Nginx  
-✅ OAuth2 authentication  
-✅ Environment variables for secrets  
-✅ PostgreSQL in isolated container  
-✅ CORS restrictions  
-✅ Security headers in Nginx  
+## Roadmap
 
-## 📊 Performance Metrics
-
-- Frontend Load Time: ~1.2s
-- API Response Time: ~200ms (AI requests: 500-2000ms)
-- Database Query Time: <50ms
-- Nginx Throughput: ~1000 requests/second
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 📞 Support
-
-For issues, questions, or feature requests, please visit the [GitHub Issues](https://github.com/swatishah946/SupportTicketSystem/issues) page.
+- Move embeddings to pgvector and lexical search to Postgres full-text once candidate sets exceed ~10k
+- Run LLM calls on a task queue (Celery/RQ) and push updates to the UI over WebSockets
+- Per-agent skills routing, business-hours SLA calendars, CSAT surveys on resolution
 
 ---
-
-**Built with ❤️ by Swati Shah**
+Built by **Swati Shah**. Previously deployed on an Azure VM (Docker Compose + nginx); see `docker-compose.prod.yml`.
