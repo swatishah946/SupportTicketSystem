@@ -298,6 +298,23 @@ SLA_POLICY_HOURS = {
 # A ticket is "at risk" once this fraction of its SLA window has elapsed.
 SLA_AT_RISK_FRACTION = 0.75
 
+# ---------------------------------------------------------------------------
+# Background jobs (Celery)
+# ---------------------------------------------------------------------------
+CELERY_BROKER_URL = os.environ.get("REDIS_URL", "memory://")
+# No broker configured -> run tasks inline, so a plain `runserver` needs no worker.
+CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not os.environ.get("REDIS_URL"))
+CELERY_TASK_EAGER_PROPAGATES = False
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_TIME_LIMIT = 60
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BEAT_SCHEDULE = {
+    "escalate-overdue-tickets": {
+        "task": "tickets.tasks.escalate_overdue",
+        "schedule": float(os.environ.get("ESCALATION_INTERVAL_SECONDS", 300)),
+    },
+}
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -34,6 +35,8 @@ class User(AbstractUser):
         ADMIN = "admin", "Admin"
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER, db_index=True)
+    # Ticket categories an agent specialises in; auto-assignment prefers specialists.
+    specialties = models.JSONField(default=list, blank=True)
 
     objects = CustomUserManager()
 
@@ -109,6 +112,13 @@ class Ticket(models.Model):
     # Semantic embedding of title+description (Gemini), when available.
     embedding = models.JSONField(null=True, blank=True, editable=False)
 
+    # Customer satisfaction, collected once the ticket is resolved.
+    csat_score = models.PositiveSmallIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    csat_comment = models.TextField(blank=True)
+    csat_at = models.DateTimeField(null=True, blank=True)
+
     duplicate_of = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="duplicates"
     )
@@ -164,6 +174,7 @@ class TicketEvent(models.Model):
         NOTE = "internal_note", "Internal note"
         ESCALATED = "escalated", "Escalated"
         DUPLICATE = "marked_duplicate", "Marked duplicate"
+        RATED = "rated", "Rated"
 
     # Events customers never see.
     INTERNAL_KINDS = {Kind.NOTE, Kind.ESCALATED}

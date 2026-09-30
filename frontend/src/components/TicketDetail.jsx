@@ -15,9 +15,51 @@ const EVENT_TEXT = {
     internal_note: () => 'added an internal note',
     escalated: (e) => `escalated for SLA breach (${e.from_value} → ${e.to_value})`,
     marked_duplicate: (e) => `marked as duplicate of ${e.to_value}`,
+    rated: (e) => `rated the support ${e.to_value}`,
 };
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
+const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+
+/** Customer satisfaction survey shown once a ticket is resolved. */
+function RatingCard({ ticketId, onRated }) {
+    const [score, setScore] = useState(0);
+    const [comment, setComment] = useState('');
+    const [error, setError] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const submit = async () => {
+        setSaving(true);
+        setError('');
+        try {
+            const res = await api.post(`/tickets/${ticketId}/rate/`, { score, comment });
+            onRated(res.data);
+        } catch (err) {
+            setError(errorMessage(err, 'Could not save your rating.'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="card callout-ai">
+            <h3 style={{ marginTop: 0 }}>How did we do?</h3>
+            <div className="row" role="radiogroup" aria-label="Rating">
+                {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" role="radio" aria-checked={score === n}
+                            className={`star ${n <= score ? 'star-on' : ''}`} onClick={() => setScore(n)}
+                            title={`${n} / 5`}>★</button>
+                ))}
+            </div>
+            <textarea rows="2" placeholder="Anything we could do better? (optional)" value={comment}
+                      onChange={(e) => setComment(e.target.value)} style={{ marginTop: 10 }} />
+            {error && <p className="error">{error}</p>}
+            <button className="btn-primary" disabled={!score || saving} onClick={submit} style={{ marginTop: 10 }}>
+                {saving ? 'Sending…' : 'Submit rating'}
+            </button>
+        </div>
+    );
+}
 
 function StaffControls({ ticket, onSaved }) {
     const [agents, setAgents] = useState([]);
@@ -280,11 +322,24 @@ const TicketDetail = () => {
                             <dt>Resolution</dt>
                             <dd>{ticket.resolved_at ? when(ticket.resolved_at)
                                 : `due ${timeFromNow(ticket.resolution_due)}`}</dd>
+                            {ticket.csat_score && (
+                                <>
+                                    <dt>Rating</dt>
+                                    <dd title={`${ticket.csat_score} / 5`}>
+                                        {stars(ticket.csat_score)}
+                                        {ticket.csat_comment && <div className="muted">“{ticket.csat_comment}”</div>}
+                                    </dd>
+                                </>
+                            )}
                         </dl>
                         {!isStaff && active && (
                             <button className="btn-danger" onClick={closeTicket} style={{ marginTop: 12 }}>Close ticket</button>
                         )}
                     </div>
+
+                    {!isStaff && !active && !ticket.csat_score && (
+                        <RatingCard ticketId={ticket.id} onRated={setTicket} />
+                    )}
 
                     {isStaff && <StaffControls ticket={ticket} onSaved={setTicket} />}
 

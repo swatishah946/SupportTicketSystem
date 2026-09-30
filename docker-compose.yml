@@ -1,4 +1,4 @@
-# Local development: hot-reload frontend + Django runserver + Postgres + Redis.
+# Local development: hot-reload frontend + Django runserver + Celery worker/beat + Postgres + Redis.
 #   cp .env.example .env && docker compose up --build
 #   open http://localhost:5173
 services:
@@ -37,6 +37,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+
+  worker:
+    build: ./backend
+    command: celery -A ticket_system worker --beat --loglevel=INFO --schedule /tmp/celerybeat-schedule
+    volumes:
+      - ./backend:/app
+    env_file: .env
+    environment:
+      DEBUG: "True"
+      DATABASE_URL: postgres://${POSTGRES_USER:-nexusdesk}:${POSTGRES_PASSWORD:-nexusdesk-dev}@db:5432/${POSTGRES_DB:-nexusdesk}
+      REDIS_URL: redis://redis:6379/0
+    healthcheck:
+      disable: true
+    depends_on:
+      - backend
 
   frontend:
     build:

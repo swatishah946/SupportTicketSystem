@@ -1,16 +1,19 @@
 # NexusDesk
 
-**An AI-assisted helpdesk with SLA enforcement, automatic routing and retrieval-grounded reply drafting.**
-Django REST · React · PostgreSQL · Redis · Gemini · Docker
+**An AI-assisted helpdesk with SLA enforcement, skills-based routing and retrieval-grounded reply drafting.**
+Django REST · React · PostgreSQL · Celery + Redis · Gemini · Docker
 
 [![CI](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml)
 
 NexusDesk covers the full life of a support ticket. A customer describes a problem and
 is warned if they have already reported it. The ticket is triaged and routed to the
-least-busy agent, with an SLA clock running from the moment it is created. The agent
-drafts a reply with an AI copilot that cites similar tickets the team has already
-solved. Every change is recorded in an audit trail, and anything past its SLA is
-escalated automatically.
+least-busy agent who specialises in that kind of problem, with an SLA clock running from
+the moment it is created. The agent drafts a reply with an AI copilot that cites similar
+tickets the team has already solved. When it's resolved, the customer rates the support.
+Every change is recorded in an audit trail, and anything past its SLA is escalated
+automatically by a background scheduler.
+
+![Admin analytics](screenshots/admin-analytics.png)
 
 ## Measured results
 
@@ -18,7 +21,8 @@ Every number below is reproducible from this repository. See `backend/evals/` an
 
 | Area | Result | How it was measured |
 |---|---|---|
-| Tests | **63 tests, 96% line coverage**, green on SQLite and PostgreSQL 16 | `pytest --cov` (CI enforces ≥ 90%) |
+| Tests | **79 tests, 97% line coverage**, green on SQLite and PostgreSQL 16 | `pytest --cov` (CI enforces ≥ 90%) |
+| Ticket creation | **never waits on the LLM**: triage and embeddings run in a Celery worker with retry and backoff | `tests/test_tasks.py` asserts no LLM call happens during the request |
 | Query efficiency | Ticket list: **2 SQL queries per request at any page size** (was ~6 per ticket: 303 queries for 51 tickets) | query-count regression tests; the "before" figure was measured on the original code |
 | API latency (2,000 tickets, PostgreSQL) | list p95 **27 ms**, detail p95 **14 ms**, analytics p95 **24 ms** | `benchmarks/bench_api.py`, in-process, 50 runs each |
 | Load test (gunicorn, 3 workers, Postgres and load generator on the same 2 vCPU machine) | 50 concurrent agents, **1,762 requests, 0 errors**, steady-state endpoints p95 **28–40 ms** | Locust, 60 s (`benchmarks/loadtest-stats.csv`) |
@@ -36,6 +40,7 @@ numbers need an API key: run `python evals/run_eval.py --classifier llm --retrie
 - Live duplicate detection while typing ("is this the same as ticket #42?")
 - AI triage fills in category and priority, and the customer can override it
 - Replying to a resolved ticket reopens it automatically
+- One-click satisfaction survey (1–5 stars + comment) once a ticket is resolved
 
 **For agents**
 - Personal queue sorted by SLA deadline, plus unassigned and breaching views
@@ -46,13 +51,16 @@ numbers need an API key: run `python evals/run_eval.py --classifier llm --retrie
 **For admins**
 - Analytics: SLA compliance, average first response and resolution time, and 14-day volume
 - **AI quality metric**: how often agents keep the AI's category or priority (measured on real usage)
-- Agent workload table (active tickets, breaches, resolved in the last 7 days) and agent onboarding
+- **Customer satisfaction (CSAT)**: average score, share rated 4–5, response rate, and CSAT per agent
+- Agent workload table (active, breaches, resolved in 7 days) with editable routing specialties
 - OpenAPI docs at `/api/docs/`
 
 **Platform**
 - SLA engine: per-priority first-response and resolution deadlines, with live state (on track, at risk, breached, met)
-- Least-loaded auto-assignment, computed in one aggregate query
-- Scheduled escalation that bumps the priority of overdue tickets (idempotent, audited)
+- Skills-based routing: the least-loaded agent specialising in the ticket's category, else the least-loaded agent overall
+- Background jobs (Celery + Redis): LLM triage and embeddings after the ticket is saved, with retries and
+  exponential backoff; the AI's triage is applied only to fields the customer left to it and never over an agent's change
+- Celery beat escalates overdue tickets every 5 minutes (idempotent, audited)
 - Append-only audit trail of every status, priority, assignment and duplicate change
 - Status state machine (a closed ticket can only be reopened, never silently "resolved")
 
@@ -63,9 +71,12 @@ flowchart LR
     B[Browser<br/>React SPA] -->|same origin, httpOnly JWT cookies| N[nginx<br/>static SPA + reverse proxy]
     N -->|/api /admin| G[gunicorn<br/>Django REST]
     G --> P[(PostgreSQL)]
-    G --> R[(Redis<br/>cache + throttling)]
-    G -.->|classify, embed, draft<br/>12 s timeout, cached| AI[Gemini API]
-    S[scheduler<br/>escalate_overdue every 5 min] --> P
+    G --> R[(Redis<br/>cache, throttling,<br/>job queue)]
+    G -.->|reply drafts<br/>12 s timeout| AI[Gemini API]
+    R --> W[Celery worker<br/>triage + embeddings,<br/>retries]
+    W -.-> AI
+    W --> P
+    BT[Celery beat] -->|escalate_overdue<br/>every 5 min| R
 ```
 
 The backend keeps HTTP handling and business rules apart:
@@ -76,12 +87,13 @@ backend/tickets/
 ├── services/
 │   ├── workflow.py     every write: role permissions, state machine, SLA timestamps, audit events
 │   ├── sla.py          deadlines, live SLA state, breach filter
-│   ├── assignment.py   least-loaded agent
+│   ├── assignment.py   skills-aware, least-loaded agent
 │   ├── search.py       TF-IDF cosine retrieval, hybrid with embeddings
 │   ├── ai.py           Gemini: structured output, validation, caching, fallbacks
 │   └── rules.py        deterministic fallback classifier (and the eval baseline)
+├── tasks.py            Celery jobs: enrich_ticket (LLM triage + embedding), escalate_overdue
 ├── management/commands/  escalate_overdue, seed_demo
-backend/tests/          63 tests: permissions matrix, workflow, SLA, AI, retrieval, performance
+backend/tests/          79 tests: permissions matrix, workflow, SLA, AI, retrieval, jobs, CSAT, routing, performance
 backend/evals/          labelled dataset + evaluation harness
 backend/benchmarks/     query/latency benchmark, Locust load test
 ```
@@ -135,7 +147,7 @@ docker compose exec backend python manage.py seed_demo   # demo users + 120 tick
 ```
 Demo logins (password `NexusDemo!2026`): `admin@nexusdesk.dev`, `agent1@nexusdesk.dev`, `customer1@nexusdesk.dev`.
 
-**Production-style stack** (nginx + gunicorn + Postgres + Redis + scheduler):
+**Production-style stack** (nginx + gunicorn + Postgres + Redis + Celery worker + beat):
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build   # http://localhost
 ```
@@ -164,20 +176,33 @@ Full interactive docs are at `/api/docs/`.
 | Endpoint | Who | Purpose |
 |---|---|---|
 | `GET /api/tickets/` | all (scoped) | paginated list. Filters: `status`, `priority`, `category`, `assigned_to=me`, `unassigned`, `sla_breached`, `active`, `search`, `ordering` |
-| `POST /api/tickets/` | all | create. Triage, SLA, auto-assignment and embedding happen here |
+| `POST /api/tickets/` | all | create: instant triage, SLA and skills-based assignment; LLM triage + embedding queued |
 | `PATCH /api/tickets/:id/` | role-dependent | field-level permissions and a status state machine |
 | `POST /api/tickets/:id/comments/` | all (`is_internal` staff only) | reply or internal note |
 | `POST /api/tickets/classify/` | all, rate-limited | AI triage suggestion |
 | `POST /api/tickets/similar/` | all (scoped) | duplicate candidates |
 | `POST /api/tickets/:id/suggest_reply/` | staff, rate-limited | grounded reply draft with sources |
-| `GET /api/analytics/` | admin | SLA, AI-agreement, volume, workload |
+| `POST /api/tickets/:id/rate/` | ticket owner, once resolved | CSAT score 1–5 + comment |
+| `GET /api/agents/` · `PATCH /api/agents/:id/` | staff · admin | staff directory · set routing specialties |
+| `GET /api/analytics/` | admin | SLA, CSAT, AI-agreement, volume, workload |
 | `GET /api/health/` | public | liveness + DB check |
+
+## Screenshots
+
+| Agent queue (sorted by SLA deadline) | AI copilot draft with its sources |
+|---|---|
+| ![Agent queue](screenshots/agent-queue.png) | ![Copilot](screenshots/agent-ticket-copilot.png) |
+| **New ticket: AI triage + duplicate warning** | **Customer dashboard** |
+| ![New ticket](screenshots/customer-new-ticket.png) | ![Customer](screenshots/customer-dashboard.png) |
+
+Screenshots are generated by CI (`.github/workflows/screenshots.yml`) from the real production stack with demo
+data: run the workflow from the Actions tab, or push a commit whose message contains `[screenshots]`.
 
 ## Roadmap
 
 - Move embeddings to pgvector and lexical search to Postgres full-text once candidate sets exceed ~10k
-- Run LLM calls on a task queue (Celery/RQ) and push updates to the UI over WebSockets
-- Per-agent skills routing, business-hours SLA calendars, CSAT surveys on resolution
+- Push ticket updates to the UI over WebSockets (Django Channels) instead of refresh-on-navigate
+- Business-hours SLA calendars (deadlines currently run on wall-clock time)
 
 ---
 Built by **Swati Shah**. Previously deployed on an Azure VM (Docker Compose + nginx); see `docker-compose.prod.yml`.

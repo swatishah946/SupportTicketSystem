@@ -22,14 +22,15 @@ from .filters import TicketFilter
 from .models import Ticket, TicketComment, TicketEvent
 from .permissions import IsAdminRole, IsStaffMember
 from .serializers import (
+    AgentSerializer,
     CommentInputSerializer,
     CreateAgentSerializer,
+    RatingSerializer,
     TextInputSerializer,
     TicketCommentSerializer,
     TicketDetailSerializer,
     TicketListSerializer,
     TicketWriteSerializer,
-    UserMiniSerializer,
 )
 from .services import ai, workflow
 from .services.search import rank, ticket_text
@@ -139,6 +140,16 @@ class TicketViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Cre
                                        data.validated_data["is_internal"])
         return Response(TicketCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(request=RatingSerializer, responses=TicketDetailSerializer)
+    @action(detail=True, methods=["post"])
+    def rate(self, request, pk=None):
+        """Customer satisfaction rating (1-5) once the ticket is resolved."""
+        ticket = self.get_object()
+        data = RatingSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        workflow.rate_ticket(ticket, request.user, data.validated_data["score"], data.validated_data["comment"])
+        return self._detail(ticket)
+
     @extend_schema(request=TextInputSerializer)
     @action(detail=False, methods=["post"])
     def classify(self, request):
@@ -211,6 +222,9 @@ class AnalyticsView(APIView):
             ai_labelled=Count("id", filter=~Q(ai_category="")),
             ai_category_kept=Count("id", filter=~Q(ai_category="") & Q(category=F("ai_category"))),
             ai_priority_kept=Count("id", filter=~Q(ai_priority="") & Q(priority=F("ai_priority"))),
+            csat_responses=Count("id", filter=Q(csat_score__isnull=False)),
+            csat_satisfied=Count("id", filter=Q(csat_score__gte=4)),
+            csat_avg=Avg("csat_score"),
             avg_first_response=Avg(ExpressionWrapper(F("first_response_at") - F("created_at"),
                                                      output_field=DurationField())),
             avg_resolution=Avg(ExpressionWrapper(F("resolved_at") - F("created_at"), output_field=DurationField())),
@@ -244,6 +258,7 @@ class AnalyticsView(APIView):
                     assigned_tickets__status__in=Ticket.ACTIVE_STATUSES,
                     assigned_tickets__resolution_due__lt=now,
                 )),
+                csat=Avg("assigned_tickets__csat_score"),
             )
             .order_by("-active", "username")
         )
@@ -259,6 +274,12 @@ class AnalyticsView(APIView):
                 "avg_first_response_minutes": minutes(totals["avg_first_response"]),
                 "avg_resolution_minutes": minutes(totals["avg_resolution"]),
             },
+            "csat": {
+                "responses": totals["csat_responses"],
+                "avg_score": round(totals["csat_avg"], 2) if totals["csat_avg"] is not None else None,
+                "satisfied_pct": pct(totals["csat_satisfied"], totals["csat_responses"]),
+                "response_rate_pct": pct(totals["csat_responses"], totals["resolved_count"]),
+            },
             "ai": {
                 "labelled_tickets": totals["ai_labelled"],
                 "category_agreement_pct": pct(totals["ai_category_kept"], totals["ai_labelled"]),
@@ -270,7 +291,8 @@ class AnalyticsView(APIView):
             "daily_volume": volume,
             "agents": [
                 {"id": a.id, "username": a.username, "email": a.email, "role": a.role,
-                 "active": a.active, "resolved_7d": a.resolved_7d, "breached": a.breached}
+                 "active": a.active, "resolved_7d": a.resolved_7d, "breached": a.breached,
+                 "csat": round(a.csat, 2) if a.csat is not None else None, "specialties": a.specialties or []}
                 for a in agents
             ],
         })
@@ -281,17 +303,33 @@ class AgentListView(APIView):
 
     permission_classes = [IsStaffMember]
 
-    @extend_schema(responses=UserMiniSerializer(many=True))
+    @extend_schema(responses=AgentSerializer(many=True))
     def get(self, request):
         staff = User.objects.filter(role__in=[User.Role.AGENT, User.Role.ADMIN], is_active=True).order_by("username")
-        return Response(UserMiniSerializer(staff, many=True).data)
+        return Response(AgentSerializer(staff, many=True).data)
+
+
+class AgentDetailView(APIView):
+    """Admins set which ticket categories an agent specialises in."""
+
+    permission_classes = [IsAdminRole]
+
+    @extend_schema(request=AgentSerializer, responses=AgentSerializer)
+    def patch(self, request, pk):
+        agent = User.objects.filter(pk=pk, role__in=[User.Role.AGENT, User.Role.ADMIN]).first()
+        if agent is None:
+            return Response({"detail": "Agent not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AgentSerializer(agent, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class CreateAgentView(APIView):
     permission_classes = [IsAdminRole]
     throttle_scope = "auth"
 
-    @extend_schema(request=CreateAgentSerializer, responses={201: UserMiniSerializer})
+    @extend_schema(request=CreateAgentSerializer, responses={201: AgentSerializer})
     def post(self, request):
         data = CreateAgentSerializer(data=request.data)
         data.is_valid(raise_exception=True)
@@ -303,8 +341,9 @@ class CreateAgentView(APIView):
             validate_password(password)
         except DjangoValidationError as exc:
             return Response({"password": list(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
-        agent = User.objects.create_user(unique_username(email), email, password, role=User.Role.AGENT)
-        return Response(UserMiniSerializer(agent).data, status=status.HTTP_201_CREATED)
+        agent = User.objects.create_user(unique_username(email), email, password, role=User.Role.AGENT,
+                                         specialties=sorted(set(data.validated_data["specialties"])))
+        return Response(AgentSerializer(agent).data, status=status.HTTP_201_CREATED)
 
 
 class HealthView(APIView):

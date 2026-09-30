@@ -107,7 +107,8 @@ def test_hybrid_rank_finds_paraphrase_with_no_shared_words():
     assert hybrid[0][0] is docs[0]
 
 
-def test_embeddings_stored_on_create_and_used_for_duplicates(monkeypatch, customer):
+def test_embeddings_stored_on_create_and_used_for_duplicates(monkeypatch, customer,
+                                                             django_capture_on_commit_callbacks):
     from django.test import override_settings
 
     vectors = {"invoice": [1.0, 0.0], "password": [0.0, 1.0]}
@@ -119,11 +120,13 @@ def test_embeddings_stored_on_create_and_used_for_duplicates(monkeypatch, custom
     monkeypatch.setattr(ai, "_generate", lambda *a: ai.ClassificationSchema(category="billing", priority="low"))
     with override_settings(GEMINI_API_KEY="test-key"):
         client = client_for(customer)
-        first = client.post("/api/tickets/", {"title": "Invoice PDF", "description": "need last month's invoice"},
-                            format="json").json()
+        with django_capture_on_commit_callbacks(execute=True):  # runs the background job
+            first = client.post("/api/tickets/", {"title": "Invoice PDF", "description": "need last month's invoice"},
+                                format="json").json()
         assert Ticket.objects.get(pk=first["id"]).embedding == [1.0, 0.0]
-        other = client.post("/api/tickets/", {"title": "Reset", "description": "password reset mail"},
-                            format="json").json()
+        with django_capture_on_commit_callbacks(execute=True):
+            other = client.post("/api/tickets/", {"title": "Reset", "description": "password reset mail"},
+                                format="json").json()
         # Shares no words with the first ticket, but the embedding matches.
         matches = client.post("/api/tickets/similar/", {"description": "where is my bill copy"},
                               format="json").json()

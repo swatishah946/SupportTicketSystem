@@ -224,3 +224,8 @@ table.data th { background: #2a2a2a; color: white; text-transform: uppercase; fo
 .btn-danger { background: #b00020; color: white; border-color: #b00020; }
 .checkbox { display: flex; gap: 8px; align-items: center; font-weight: bold; }
 .checkbox input { width: auto; }
+
+.star { font-size: 1.6rem; padding: 2px 8px; box-shadow: none; color: #bbb; }
+.star-on { color: #2a2a2a; background: #ffe8b3; }
+.chip { font-size: 0.7rem; padding: 2px 8px; box-shadow: none; text-transform: lowercase; }
+.chip-on { background: #2a2a2a; color: white; }

@@ -30,6 +30,20 @@ class UserMiniSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class AgentSerializer(serializers.ModelSerializer):
+    specialties = serializers.ListField(
+        child=serializers.ChoiceField(choices=Ticket.Category.choices), required=False, allow_empty=True
+    )
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "email", "role", "specialties"]
+        read_only_fields = ["id", "username", "email", "role"]
+
+    def validate_specialties(self, value):
+        return sorted(set(value))
+
+
 class TicketCommentSerializer(serializers.ModelSerializer):
     author = UserMiniSerializer(read_only=True)
 
@@ -61,7 +75,7 @@ class TicketListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "description", "category", "priority", "status", "created_at", "updated_at",
             "created_by", "assigned_to", "has_unread_updates", "comment_count",
-            "first_response_due", "resolution_due", "sla_state", "escalated", "duplicate_of",
+            "first_response_due", "resolution_due", "sla_state", "escalated", "duplicate_of", "csat_score",
         ]
         read_only_fields = fields
 
@@ -73,7 +87,7 @@ class TicketDetailSerializer(TicketListSerializer):
     class Meta(TicketListSerializer.Meta):
         fields = TicketListSerializer.Meta.fields + [
             "resolution_notes", "first_response_at", "resolved_at",
-            "ai_category", "ai_priority", "ai_source", "comments", "events",
+            "ai_category", "ai_priority", "ai_source", "csat_comment", "csat_at", "comments", "events",
         ]
         read_only_fields = fields
 
@@ -113,6 +127,14 @@ class TextInputSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=10000)
 
 
+class RatingSerializer(serializers.Serializer):
+    score = serializers.IntegerField(min_value=1, max_value=5)
+    comment = serializers.CharField(required=False, allow_blank=True, max_length=2000, default="")
+
+
 class CreateAgentSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
+    specialties = serializers.ListField(
+        child=serializers.ChoiceField(choices=Ticket.Category.choices), required=False, default=list
+    )

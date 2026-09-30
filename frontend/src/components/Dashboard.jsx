@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { Stat } from './ui';
-import { formatMinutes, label, pct } from '../lib/format';
+import { CATEGORIES, formatMinutes, label, pct } from '../lib/format';
 
 function Breakdown({ title, data }) {
     const total = Object.values(data).reduce((a, b) => a + b, 0) || 1;
@@ -22,7 +22,33 @@ function Breakdown({ title, data }) {
     );
 }
 
-/** Admin analytics: SLA performance, AI quality, volume and agent workload. */
+/** Toggle chips for the ticket categories an agent specialises in. */
+function Specialties({ agent, onChange }) {
+    const [saving, setSaving] = useState(false);
+    const toggle = async (category) => {
+        const next = agent.specialties.includes(category)
+            ? agent.specialties.filter((c) => c !== category)
+            : [...agent.specialties, category];
+        setSaving(true);
+        try {
+            const res = await api.patch(`/agents/${agent.id}/`, { specialties: next });
+            onChange(res.data.specialties);
+        } finally {
+            setSaving(false);
+        }
+    };
+    return (
+        <div className="row" style={{ gap: 4, opacity: saving ? 0.5 : 1 }}>
+            {CATEGORIES.map((c) => (
+                <button key={c} type="button" disabled={saving} onClick={() => toggle(c)}
+                        className={`chip ${agent.specialties.includes(c) ? 'chip-on' : ''}`}
+                        aria-pressed={agent.specialties.includes(c)}>{c}</button>
+            ))}
+        </div>
+    );
+}
+
+/** Admin analytics: SLA performance, satisfaction, AI quality, volume and agent workload. */
 const Dashboard = () => {
     const [stats, setStats] = useState(null);
     const [error, setError] = useState('');
@@ -50,6 +76,9 @@ const Dashboard = () => {
                       hint={`first reply in SLA: ${pct(sla.first_response_compliance_pct)}`} />
                 <Stat title="Avg first response" value={formatMinutes(sla.avg_first_response_minutes)} />
                 <Stat title="Avg resolution" value={formatMinutes(sla.avg_resolution_minutes)} />
+                <Stat title="Customer satisfaction" value={stats.csat.avg_score ?? '—'}
+                      hint={`${pct(stats.csat.satisfied_pct)} rated 4-5 · ${stats.csat.responses} responses`}
+                      tone={stats.csat.avg_score === null ? undefined : stats.csat.avg_score >= 4 ? 'good' : 'bad'} />
                 <Stat title="AI triage kept by agents" value={pct(ai.category_agreement_pct)}
                       hint={`priority kept: ${pct(ai.priority_agreement_pct)} · n=${ai.labelled_tickets}`} />
             </div>
@@ -79,21 +108,30 @@ const Dashboard = () => {
             <div className="table-wrap">
                 <table className="data">
                     <thead>
-                        <tr><th>Agent</th><th>Role</th><th>Active</th><th>Breached</th><th>Resolved (7d)</th></tr>
+                        <tr>
+                            <th>Agent</th><th>Specialties (routing)</th><th>Active</th><th>Breached</th>
+                            <th>Resolved (7d)</th><th>CSAT</th>
+                        </tr>
                     </thead>
                     <tbody>
                         {stats.agents.map((a) => (
                             <tr key={a.id}>
                                 <td>{a.username}<div className="muted" style={{ fontSize: '0.75rem' }}>{a.email}</div></td>
-                                <td>{label(a.role)}</td>
+                                <td>
+                                    <Specialties agent={a} onChange={(specialties) => setStats((st) => ({
+                                        ...st,
+                                        agents: st.agents.map((x) => (x.id === a.id ? { ...x, specialties } : x)),
+                                    }))} />
+                                </td>
                                 <td>{a.active}</td>
                                 <td style={{ color: a.breached ? '#b00020' : undefined, fontWeight: a.breached ? 'bold' : undefined }}>
                                     {a.breached}
                                 </td>
                                 <td>{a.resolved_7d}</td>
+                                <td>{a.csat ?? '—'}</td>
                             </tr>
                         ))}
-                        {stats.agents.length === 0 && <tr><td colSpan="5">No agents yet.</td></tr>}
+                        {stats.agents.length === 0 && <tr><td colSpan="6">No agents yet.</td></tr>}
                     </tbody>
                 </table>
             </div>

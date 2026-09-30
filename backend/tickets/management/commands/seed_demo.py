@@ -59,6 +59,9 @@ class Command(BaseCommand):
 
         self._user("admin@nexusdesk.dev", User.Role.ADMIN, password)
         agents = [self._user(f"agent{i}@nexusdesk.dev", User.Role.AGENT, password) for i in range(1, 4)]
+        for agent, skills in zip(agents, (["billing"], ["technical"], ["account", "general"]), strict=True):
+            agent.specialties = skills
+            agent.save(update_fields=["specialties"])
         customers = [self._user(f"customer{i}@nexusdesk.dev", User.Role.CUSTOMER, password) for i in range(1, 9)]
         rows = [json.loads(line) for line in DATASET.read_text().splitlines()]
         now = timezone.now()
@@ -96,6 +99,10 @@ class Command(BaseCommand):
                     ticket.resolution_notes = AGENT_REPLIES[ticket.category]
                     TicketComment.objects.create(ticket=ticket, author=ticket.assigned_to,
                                                  body=AGENT_REPLIES[ticket.category])
+                    if rng.random() < 0.6:  # not every customer answers the survey
+                        on_time = ticket.resolved_at <= ticket.resolution_due
+                        ticket.csat_score = rng.choice([4, 5, 5] if on_time else [2, 3, 4])
+                        ticket.csat_at = ticket.resolved_at + timedelta(hours=rng.uniform(0.2, 12))
             ticket.save()
             Ticket.objects.filter(pk=ticket.pk).update(created_at=created)
 

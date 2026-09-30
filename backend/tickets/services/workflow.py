@@ -35,7 +35,14 @@ def log_event(ticket, actor, kind, from_value="", to_value=""):
 
 @transaction.atomic
 def create_ticket(user, title, description, category=None, priority=None):
-    suggestion = ai.classify(title, description)
+    """Create a ticket without waiting on any AI provider.
+
+    Triage uses the cached LLM answer or the instant rule-based one; the
+    background job `tickets.tasks.enrich_ticket` then asks the LLM (if it wasn't
+    already), applies its triage to fields the customer left to the AI, and
+    stores the embedding used for semantic duplicate search.
+    """
+    suggestion = ai.classify_fast(title, description)
     ticket = Ticket(
         title=title,
         description=description,
@@ -46,12 +53,11 @@ def create_ticket(user, title, description, category=None, priority=None):
         ai_priority=suggestion["priority"],
         ai_source=suggestion["source"],
     )
-    ticket.embedding = ai.embed(f"{title}\n{description}")
     ticket.save()  # created_at is set on insert; SLA counts from it
     sla.apply_sla(ticket)
     fields = ["first_response_due", "resolution_due"]
     if settings.AUTO_ASSIGN_TICKETS:
-        agent = least_loaded_agent()
+        agent = least_loaded_agent(ticket.category)
         if agent:
             ticket.assigned_to = agent
             fields.append("assigned_to")
@@ -59,7 +65,56 @@ def create_ticket(user, title, description, category=None, priority=None):
     log_event(ticket, user, TicketEvent.Kind.CREATED, to_value=f"{ticket.category}/{ticket.priority}")
     if ticket.assigned_to:
         log_event(ticket, None, TicketEvent.Kind.ASSIGNED, to_value=ticket.assigned_to.email)
+
+    from ..tasks import enrich_ticket  # local import: tasks imports this module
+
+    ai_fields = [f for f, given in (("category", category), ("priority", priority)) if not given]
+    transaction.on_commit(lambda: enrich_ticket.delay(ticket.pk, ai_fields))
     return ticket
+
+
+def apply_ai_triage(ticket, suggestion, ai_fields):
+    """Record an LLM suggestion and apply it to the fields the customer left to
+    the AI, unless a human has already changed them. Returns changed fields."""
+    changed = []
+    ticket.ai_category, ticket.ai_priority, ticket.ai_source = (
+        suggestion["category"], suggestion["priority"], suggestion["source"]
+    )
+    touched = set(ticket.events.filter(actor__isnull=False).values_list("kind", flat=True))
+    if "category" in ai_fields and TicketEvent.Kind.CATEGORY not in touched \
+            and suggestion["category"] != ticket.category:
+        log_event(ticket, None, TicketEvent.Kind.CATEGORY, ticket.category, suggestion["category"])
+        ticket.category = suggestion["category"]
+        changed.append("category")
+    if "priority" in ai_fields and TicketEvent.Kind.PRIORITY not in touched \
+            and suggestion["priority"] != ticket.priority:
+        log_event(ticket, None, TicketEvent.Kind.PRIORITY, ticket.priority, suggestion["priority"])
+        ticket.priority = suggestion["priority"]
+        sla.apply_sla(ticket)
+        changed += ["priority", "first_response_due", "resolution_due"]
+    ticket.save(update_fields=["ai_category", "ai_priority", "ai_source", *changed])
+    return changed
+
+
+def escalate_overdue(dry_run=False, now=None):
+    """Bump the priority of active tickets past their SLA (once per ticket).
+
+    Deadlines are kept: escalation raises urgency, it doesn't reset the clock
+    on a ticket that is already late. Returns [(ticket_id, old, new)].
+    """
+    now = now or timezone.now()
+    escalated = []
+    with transaction.atomic():
+        for ticket in Ticket.objects.filter(sla.breached_q(now), escalated=False).select_for_update():
+            new_priority = sla.next_priority(ticket.priority)
+            escalated.append((ticket.pk, ticket.priority, new_priority))
+            if dry_run:
+                continue
+            log_event(ticket, None, TicketEvent.Kind.ESCALATED, ticket.priority, new_priority)
+            ticket.priority = new_priority
+            ticket.escalated = True
+            ticket.save(update_fields=["priority", "escalated", "updated_at"])
+    return escalated
 
 
 def _set_status(ticket, new_status, actor, now):
@@ -164,6 +219,23 @@ def add_comment(ticket, user, body, is_internal=False):
 
     ticket.save(update_fields=update_fields)
     return comment
+
+
+@transaction.atomic
+def rate_ticket(ticket, user, score, comment=""):
+    """Customer satisfaction rating: owner only, once, after resolution."""
+    if ticket.created_by_id != user.pk:
+        raise PermissionDenied("Only the customer who raised the ticket can rate it.")
+    if ticket.status not in Ticket.DONE_STATUSES:
+        raise ValidationError({"score": "Tickets can be rated once they are resolved."})
+    if ticket.csat_score is not None:
+        raise ValidationError({"score": "This ticket has already been rated."})
+    ticket.csat_score = score
+    ticket.csat_comment = (comment or "").strip()
+    ticket.csat_at = timezone.now()
+    ticket.save(update_fields=["csat_score", "csat_comment", "csat_at", "updated_at"])
+    log_event(ticket, user, TicketEvent.Kind.RATED, to_value=f"{score}/5")
+    return ticket
 
 
 def resolution_text(ticket):

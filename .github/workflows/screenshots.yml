@@ -1,0 +1,49 @@
+name: Screenshots
+
+# Boots the production stack with demo data, captures UI screenshots with
+# Playwright and commits them to the branch. Runs on demand, or when a pushed
+# commit message contains "[screenshots]". Commits made with GITHUB_TOKEN do
+# not trigger further workflow runs, so this cannot loop.
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Boot the production stack
+        run: |
+          cp .env.example .env
+          sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')/" .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=screenshots/' .env
+          docker compose -f docker-compose.prod.yml up -d --build
+          for i in $(seq 1 40); do curl -fs http://localhost/api/health/ && break; sleep 3; done
+          docker compose -f docker-compose.prod.yml exec -T backend python manage.py seed_demo --tickets 150 --force
+
+      - name: Capture
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+          python scripts/screenshots.py --base http://localhost --out screenshots
+
+      - name: Commit screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add screenshots/*.png
+          git diff --cached --quiet || git commit -m "Update UI screenshots"
+          git push
+
+      - if: failure()
+        run: docker compose -f docker-compose.prod.yml logs --tail 150

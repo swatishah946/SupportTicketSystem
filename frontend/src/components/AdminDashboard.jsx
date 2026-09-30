@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import api, { errorMessage } from '../api';
+import { CATEGORIES } from '../lib/format';
 import Dashboard from './Dashboard';
 import TicketList from './TicketList';
 
 const AdminDashboard = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [specialties, setSpecialties] = useState([]);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState(null);
 
@@ -14,10 +16,11 @@ const AdminDashboard = () => {
         setLoading(true);
         setMessage(null);
         try {
-            const res = await api.post('/auth/create-agent/', { email, password });
+            const res = await api.post('/auth/create-agent/', { email, password, specialties });
             setMessage({ ok: true, text: `Agent ${res.data.email} created.` });
             setEmail('');
             setPassword('');
+            setSpecialties([]);
         } catch (err) {
             setMessage({ ok: false, text: errorMessage(err, 'Failed to create agent.') });
         } finally {
@@ -43,6 +46,16 @@ const AdminDashboard = () => {
                        onChange={(e) => setEmail(e.target.value)} required style={{ flex: '1 1 220px' }} />
                 <input type="password" placeholder="Password (min 8 chars)" value={password}
                        onChange={(e) => setPassword(e.target.value)} required minLength={8} style={{ flex: '1 1 220px' }} />
+                <div className="row" style={{ flexBasis: '100%' }}>
+                    <span className="muted">Routes these categories to them first:</span>
+                    {CATEGORIES.map((c) => (
+                        <label key={c} className="checkbox">
+                            <input type="checkbox" checked={specialties.includes(c)}
+                                   onChange={() => setSpecialties((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]))} />
+                            {c}
+                        </label>
+                    ))}
+                </div>
                 <button type="submit" className="btn-primary" disabled={loading}>
                     {loading ? 'Creating…' : 'Create agent'}
                 </button>
