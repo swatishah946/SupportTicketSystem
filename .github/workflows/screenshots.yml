@@ -28,8 +28,9 @@ jobs:
           cp .env.example .env
           sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')/" .env
           sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=screenshots/' .env
-          # Public Client ID from the repository variable (Settings > Variables); optional.
-          sed -i "s/^GOOGLE_CLIENT_ID=.*/GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }}/" .env
+          # Google OAuth Client ID (public by design: it is visible in every page that shows
+          # the Google button). A repository variable overrides it.
+          sed -i "s/^GOOGLE_CLIENT_ID=.*/GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID || '306876022491-145h5rsuk4aqigfon6lkak04ithc7dic.apps.googleusercontent.com' }}/" .env
           docker compose -f docker-compose.prod.yml up -d --build
           for i in $(seq 1 40); do curl -fs http://localhost/api/health/ && break; sleep 3; done
           docker compose -f docker-compose.prod.yml exec -T backend python manage.py seed_demo --tickets 150 --force
@@ -47,6 +48,7 @@ jobs:
           git add screenshots/*.png
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "Update UI screenshots"
+          git pull --rebase origin "${GITHUB_REF_NAME}"  # a newer commit may have landed meanwhile
           git push
           # Commits pushed with GITHUB_TOKEN don't trigger CI, which would leave the
           # PR head unchecked; workflow_dispatch is the sanctioned way to run it.

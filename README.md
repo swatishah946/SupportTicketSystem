@@ -67,6 +67,13 @@ flowchart LR
 | Slow database pattern fixed (N+1 queries) | The ticket list used to run ~6 database queries **per ticket** (303 queries for 51 tickets). It now runs **2 queries per page**, no matter how many tickets | `tests/test_platform.py` fails if the count ever grows with the data |
 | AI never blocks the user | Creating a ticket does not wait for Gemini; AI work runs in the background with automatic retries | `tests/test_tasks.py` checks no AI call happens during the request |
 | Live updates are private | Customers only receive events for their own tickets, and never for private notes | `tests/test_websockets.py`, plus a CI check through the real nginx |
+| Live updates are fast | An agent's reply reaches the customer's open page in **29 ms** (median; 46 ms for 95% of replies, 200 replies measured) | `benchmarks/bench_websocket.py` |
+| Live updates scale | With **1,000 people connected at once**, a ticket update reaches all of them within **0.5 s** (474 ms for 95% of updates), with no errors | `benchmarks/bench_websocket.py --sockets 1000` |
+| API stays fast with data | With 2,000 tickets in PostgreSQL, a page of 100 tickets loads in **under 62 ms** for 95% of requests | `benchmarks/bench_api.py` |
+
+The speed numbers were measured on a 2-CPU machine with PostgreSQL, Redis and 2 Uvicorn worker processes, with the
+test client running on the same machine (so it competes for the same CPUs). Results are saved in
+`backend/benchmarks/results-*.json`; numbers on other hardware will differ.
 
 How well the AI's suggestions match human judgement is measured separately, with honest caveats, in
 [`backend/evals/README.md`](backend/evals/README.md).
