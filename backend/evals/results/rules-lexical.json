@@ -1,0 +1,98 @@
+{
+  "dataset": "evals/tickets.jsonl",
+  "classifier": "rules",
+  "triage": {
+    "n": 96,
+    "sources": {
+      "rules": 96
+    },
+    "category_accuracy": 0.833,
+    "category_macro_f1": 0.839,
+    "priority_accuracy": 0.656,
+    "priority_within_one": 0.948,
+    "latency_ms_p50": 0.25,
+    "latency_ms_p95": 0.32,
+    "category_confusion": {
+      "billing": {
+        "billing": 19,
+        "general": 1
+      },
+      "technical": {
+        "technical": 29,
+        "general": 9,
+        "account": 2
+      },
+      "account": {
+        "account": 19,
+        "general": 1
+      },
+      "general": {
+        "technical": 3,
+        "general": 13
+      }
+    }
+  },
+  "duplicates": {
+    "n": 96,
+    "retriever": "lexical",
+    "hit_at_1": 0.583,
+    "hit_at_3": 0.667,
+    "threshold_sweep": [
+      {
+        "threshold": 0.2,
+        "duplicate_recall": 0.521,
+        "false_positive_rate": 0.302
+      },
+      {
+        "threshold": 0.25,
+        "duplicate_recall": 0.448,
+        "false_positive_rate": 0.146
+      },
+      {
+        "threshold": 0.3,
+        "duplicate_recall": 0.292,
+        "false_positive_rate": 0.062
+      },
+      {
+        "threshold": 0.35,
+        "duplicate_recall": 0.156,
+        "false_positive_rate": 0.021
+      },
+      {
+        "threshold": 0.4,
+        "duplicate_recall": 0.073,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.5,
+        "duplicate_recall": 0.01,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.6,
+        "duplicate_recall": 0.0,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.65,
+        "duplicate_recall": 0.0,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.7,
+        "duplicate_recall": 0.0,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.75,
+        "duplicate_recall": 0.0,
+        "false_positive_rate": 0.0
+      },
+      {
+        "threshold": 0.8,
+        "duplicate_recall": 0.0,
+        "false_positive_rate": 0.0
+      }
+    ]
+  }
+}

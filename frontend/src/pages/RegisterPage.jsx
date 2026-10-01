@@ -1,63 +1,53 @@
-import React, { useState } from 'react';
-import { GoogleLogin } from '@react-oauth/google';
+import React, { useState, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../api';
+import api, { errorMessage } from '../api';
+import GoogleButton from '../components/GoogleButton';
+import { AuthContext, homeFor } from '../context/auth';
 
 function RegisterPage() {
     const navigate = useNavigate();
+    const { refreshUser } = useContext(AuthContext);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [error, setError] = useState('');
 
-    const handleGoogleSuccess = async (credentialResponse) => {
-        // ... (existing google logic)
+    // Registration and Google sign-in both return the user and set auth cookies.
+    const finish = async (user) => {
+        await refreshUser();
+        navigate(homeFor(user?.role));
+    };
+
+    const handleGoogleCredential = async (credential) => {
+        setError('');
+        try {
+            const res = await api.post('/auth/google/', { credential });
+            await finish(res.data.user);
+        } catch (err) {
+            setError(errorMessage(err, 'Google sign-up failed.'));
+        }
     };
 
     const handleRegister = async (e) => {
         e.preventDefault();
         setError('');
-
         if (password !== confirmPassword) {
             setError('Passwords do not match');
             return;
         }
-
         if (password.length < 8) {
             setError('Password must be at least 8 characters');
             return;
         }
-
         try {
-            const derivedUsername = email.split('@')[0] + Math.floor(Math.random() * 1000);
-
-            await api.post('/auth/registration/', {
-                username: derivedUsername,
-                email: email,
+            const res = await api.post('/auth/registration/', {
+                email,
                 password1: password,
                 password2: confirmPassword
             });
-            alert('Account created! Please log in.');
-            navigate('/login');
+            await finish(res.data.user);
         } catch (err) {
-            console.error('Registration failed', err);
-            if (err.response && err.response.data) {
-                const data = err.response.data;
-                if (typeof data === 'string') {
-                    // Likely a 500 HTML error page
-                    setError('A server error occurred. Please try again later.');
-                } else if (typeof data === 'object') {
-                    // Extract all error messages from the object (e.g. {"email": ["Invalid"], "password": ["Too short"]})
-                    const errorMessages = Object.values(data)
-                        .flat()
-                        .join(' | ');
-                    setError(errorMessages || 'Registration failed.');
-                } else {
-                    setError('Registration failed.');
-                }
-            } else {
-                setError('Network error. Cannot reach server.');
-            }
+            setError(errorMessage(err, 'Registration failed.'));
         }
     };
 
@@ -141,13 +131,7 @@ function RegisterPage() {
                 </div>
             </form>
 
-            <div style={{ marginTop: '20px' }}>
-                <GoogleLogin
-                    onSuccess={handleGoogleSuccess}
-                    onError={() => setError('Google Registration Failed')}
-                    text="signup_with"
-                />
-            </div>
+            <GoogleButton onCredential={handleGoogleCredential} onError={setError} text="signup_with" />
         </div>
     );
 }

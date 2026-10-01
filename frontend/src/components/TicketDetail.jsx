@@ -1,223 +1,375 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import api from '../api';
-import { AuthContext } from '../context/AuthContext';
+import React, { useCallback, useContext, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import api, { errorMessage } from '../api';
+import { AuthContext } from '../context/auth';
+import { useDebouncedTicketEvents } from '../context/realtime';
+import { Badge, SlaBadge } from './ui';
+import { CATEGORIES, label, PRIORITIES, STATUSES, deadline } from '../lib/format';
+
+const EVENT_TEXT = {
+    created: (e) => `created the ticket (${e.to_value})`,
+    status_changed: (e) => `changed status ${label(e.from_value)} → ${label(e.to_value)}`,
+    priority_changed: (e) => `changed priority ${e.from_value} → ${e.to_value}`,
+    category_changed: (e) => `changed category ${e.from_value} → ${e.to_value}`,
+    assigned: (e) => (e.to_value ? `assigned to ${e.to_value}` : 'unassigned the ticket'),
+    commented: () => 'replied',
+    internal_note: () => 'added an internal note',
+    escalated: (e) => `escalated for SLA breach (${e.from_value} → ${e.to_value})`,
+    marked_duplicate: (e) => `marked as duplicate of ${e.to_value}`,
+    rated: (e) => `rated the support ${e.to_value}`,
+};
+
+const when = (iso) => (iso ? new Date(iso).toLocaleString() : '—');
+const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+
+/** Customer satisfaction survey shown once a ticket is resolved. */
+function RatingCard({ ticketId, onRated }) {
+    const [score, setScore] = useState(0);
+    const [comment, setComment] = useState('');
+    const [error, setError] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const submit = async () => {
+        setSaving(true);
+        setError('');
+        try {
+            const res = await api.post(`/tickets/${ticketId}/rate/`, { score, comment });
+            onRated(res.data);
+        } catch (err) {
+            setError(errorMessage(err, 'Could not save your rating.'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="card callout-ai">
+            <h3 style={{ marginTop: 0 }}>How did we do?</h3>
+            <div className="row" role="radiogroup" aria-label="Rating">
+                {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" role="radio" aria-checked={score === n}
+                            className={`star ${n <= score ? 'star-on' : ''}`} onClick={() => setScore(n)}
+                            title={`${n} / 5`}>★</button>
+                ))}
+            </div>
+            <textarea rows="2" placeholder="Anything we could do better? (optional)" value={comment}
+                      onChange={(e) => setComment(e.target.value)} style={{ marginTop: 10 }} />
+            {error && <p className="error">{error}</p>}
+            <button className="btn-primary" disabled={!score || saving} onClick={submit} style={{ marginTop: 10 }}>
+                {saving ? 'Sending…' : 'Submit rating'}
+            </button>
+        </div>
+    );
+}
+
+function StaffControls({ ticket, onSaved }) {
+    const [agents, setAgents] = useState([]);
+    const [form, setForm] = useState({});
+    const [dirty, setDirty] = useState(false); // unsaved edits survive live updates
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        api.get('/agents/').then((res) => setAgents(res.data)).catch(() => setAgents([]));
+    }, []);
+
+    useEffect(() => {
+        if (dirty) return;
+        setForm({
+            status: ticket.status,
+            priority: ticket.priority,
+            category: ticket.category,
+            assigned_to_id: ticket.assigned_to?.id ?? '',
+            duplicate_of_id: ticket.duplicate_of ?? '',
+            resolution_notes: ticket.resolution_notes || '',
+        });
+    }, [ticket, dirty]);
+
+    const set = (key) => (e) => {
+        setDirty(true);
+        setForm((f) => ({ ...f, [key]: e.target.value }));
+    };
+
+    const save = async () => {
+        const original = {
+            status: ticket.status, priority: ticket.priority, category: ticket.category,
+            assigned_to_id: ticket.assigned_to?.id ?? '', duplicate_of_id: ticket.duplicate_of ?? '',
+            resolution_notes: ticket.resolution_notes || '',
+        };
+        const changes = {};
+        Object.entries(form).forEach(([k, v]) => {
+            if (String(v) !== String(original[k])) {
+                changes[k] = (k.endsWith('_id') && v === '') ? null : (k.endsWith('_id') ? Number(v) : v);
+            }
+        });
+        if (!Object.keys(changes).length) {
+            setDirty(false);
+            return;
+        }
+        setSaving(true);
+        setError('');
+        try {
+            const res = await api.patch(`/tickets/${ticket.id}/`, changes);
+            setDirty(false);
+            onSaved(res.data);
+        } catch (err) {
+            setError(errorMessage(err, 'Update failed.'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="card">
+            <h3 style={{ marginTop: 0 }}>Triage</h3>
+            <label>Status</label>
+            <select value={form.status || ''} onChange={set('status')}>
+                {STATUSES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
+            </select>
+            <label>Priority</label>
+            <select value={form.priority || ''} onChange={set('priority')}>
+                {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <label>Category</label>
+            <select value={form.category || ''} onChange={set('category')}>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <label>Assignee</label>
+            <select value={form.assigned_to_id} onChange={set('assigned_to_id')}>
+                <option value="">Unassigned</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.username} ({label(a.role)})</option>)}
+            </select>
+            <label>Duplicate of ticket #</label>
+            <input type="number" min="1" value={form.duplicate_of_id} onChange={set('duplicate_of_id')}
+                   placeholder="closes this ticket" />
+            <label>Resolution notes (reused by the AI copilot)</label>
+            <textarea rows="3" value={form.resolution_notes} onChange={set('resolution_notes')} />
+            {error && <p className="error">{error}</p>}
+            <button className="btn-primary" onClick={save} disabled={saving} style={{ marginTop: 10 }}>
+                {saving ? 'Saving…' : 'Save changes'}
+            </button>
+            {ticket.ai_category && (
+                <p className="muted" style={{ fontSize: '0.8rem' }}>
+                    AI triage ({ticket.ai_source === 'llm' ? 'Gemini' : 'rules'}): {ticket.ai_category} / {ticket.ai_priority}
+                </p>
+            )}
+        </div>
+    );
+}
 
 const TicketDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { user } = useContext(AuthContext);
+    const isStaff = user?.role === 'admin' || user?.role === 'support_agent';
 
     const [ticket, setTicket] = useState(null);
-    const [status, setStatus] = useState('');
-    const [newComment, setNewComment] = useState('');
     const [loading, setLoading] = useState(true);
-    const [isGenerating, setIsGenerating] = useState(false);
-    const [toastMessage, setToastMessage] = useState('');
     const [error, setError] = useState('');
+    const [reply, setReply] = useState('');
+    const [internal, setInternal] = useState(false);
+    const [sending, setSending] = useState(false);
+    const [draft, setDraft] = useState(null);
+    const [drafting, setDrafting] = useState(false);
 
-    useEffect(() => {
-        const fetchTicket = async () => {
-            try {
-                const response = await api.get(`/tickets/${id}/`);
-                setTicket(response.data);
-                setStatus(response.data.status);
-            } catch (err) {
-                console.error("Failed to fetch ticket", err);
-                setError("Failed to load ticket details.");
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchTicket();
+    const load = useCallback(async () => {
+        try {
+            const res = await api.get(`/tickets/${id}/`);
+            setTicket(res.data);
+            setError('');
+        } catch (err) {
+            setError(err.response?.status === 404 ? 'Ticket not found.' : 'Failed to load ticket.');
+        } finally {
+            setLoading(false);
+        }
     }, [id]);
 
-    const handleUpdateStatus = async () => {
+    useEffect(() => { load(); }, [load]);
+
+    // Live updates: re-fetch when someone else changes this ticket.
+    useDebouncedTicketEvents((event) => {
+        if (event.ticket === Number(id) && event.actor_id !== user?.id) load();
+    }, 250);
+
+    const sendReply = async () => {
+        if (!reply.trim()) return;
+        setSending(true);
         try {
-            await api.patch(`/tickets/${id}/`, { status });
-            alert('Ticket status updated successfully!');
-            const response = await api.get(`/tickets/${id}/`);
-            setTicket(response.data);
-            setStatus(response.data.status);
+            await api.post(`/tickets/${id}/comments/`, { body: reply, is_internal: internal });
+            setReply('');
+            setInternal(false);
+            setDraft(null);
+            await load();
         } catch (err) {
-            console.error("Failed to update status", err);
-            alert('Failed to update status.');
-        }
-    };
-
-    const handleClaimTicket = async () => {
-        try {
-            await api.patch(`/tickets/${id}/`, { assigned_to_id: user.id });
-            alert('Ticket claimed successfully!');
-            const response = await api.get(`/tickets/${id}/`);
-            setTicket(response.data);
-            setStatus(response.data.status);
-        } catch (err) {
-            console.error("Failed to claim ticket", err);
-            alert('Failed to claim ticket.');
-        }
-    };
-
-    const handleAddComment = async () => {
-        if (!newComment.trim()) return;
-        try {
-            const response = await api.post(`/tickets/${id}/add_comment/`, { body: newComment });
-            // Append new comment locally
-            setTicket(prev => ({
-                ...prev,
-                comments: [...prev.comments, response.data]
-            }));
-            setNewComment('');
-        } catch (err) {
-            console.error("Failed to add comment", err);
-            alert('Failed to send reply.');
-        }
-    };
-
-    const handleSuggestReply = async () => {
-        setIsGenerating(true);
-        try {
-            const response = await api.get(`/tickets/${id}/suggest_reply/`);
-            if (response.data.suggestion) {
-                setNewComment(response.data.suggestion);
-
-                if (response.data.suggested_status) {
-                    setStatus(response.data.suggested_status);
-                    setToastMessage(`AI drafted a reply and suggested status: ${response.data.suggested_status}`);
-
-                    // Hide toast after 4 seconds
-                    setTimeout(() => setToastMessage(''), 4000);
-                }
-            } else if (response.data.error) {
-                alert("AI Error: " + response.data.error);
-            }
-        } catch (err) {
-            console.error("Failed to generate suggestion", err);
-            alert("Failed to connect to AI Copilot.");
+            alert(errorMessage(err, 'Failed to send reply.'));
         } finally {
-            setIsGenerating(false);
+            setSending(false);
         }
     };
 
-    if (loading) return <div style={{ padding: '20px', fontFamily: 'monospace' }}>Loading ticket...</div>;
-    if (error) return <div style={{ padding: '20px', fontFamily: 'monospace', color: 'red', fontWeight: 'bold' }}>{error}</div>;
+    const askCopilot = async () => {
+        setDrafting(true);
+        try {
+            const res = await api.post(`/tickets/${id}/suggest_reply/`);
+            setDraft(res.data);
+            setReply(res.data.reply);
+            setInternal(false);
+        } catch (err) {
+            alert(errorMessage(err, 'The AI copilot is unavailable right now.'));
+        } finally {
+            setDrafting(false);
+        }
+    };
+
+    const closeTicket = async () => {
+        if (!window.confirm('Close this ticket?')) return;
+        try {
+            const res = await api.patch(`/tickets/${id}/`, { status: 'closed' });
+            setTicket(res.data);
+        } catch (err) {
+            alert(errorMessage(err, 'Could not close the ticket.'));
+        }
+    };
+
+    if (loading) return <div className="page">Loading ticket…</div>;
+    if (error) return <div className="page error">{error}</div>;
     if (!ticket) return null;
 
-    const isAgentOrAdmin = user?.role === 'admin' || user?.role === 'support_agent';
-
-    // Theme styles
-    const containerStyle = { padding: '20px', fontFamily: 'monospace', maxWidth: '800px', margin: '0 auto' };
-    const cardStyle = { border: '2px solid black', padding: '20px', boxShadow: '4px 4px 0px black', marginBottom: '20px', backgroundColor: 'white' };
-    const inputStyle = { width: '100%', padding: '10px', marginBottom: '15px', border: '2px solid black', fontFamily: 'monospace', borderRadius: '0', boxSizing: 'border-box' };
-    const btnStyle = { padding: '10px 20px', backgroundColor: 'black', color: 'white', border: 'none', boxShadow: '4px 4px 0px #888', cursor: 'pointer', fontWeight: 'bold', fontFamily: 'monospace', textTransform: 'uppercase' };
+    const active = ticket.status === 'open' || ticket.status === 'in_progress';
 
     return (
-        <div style={containerStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h1 style={{ textTransform: 'uppercase', margin: 0 }}>Ticket #{ticket.id}</h1>
-                <button onClick={() => navigate(-1)} style={{ ...btnStyle, backgroundColor: 'white', color: 'black', border: '2px solid black', boxShadow: '2px 2px 0px black' }}>Back</button>
-            </div>
-
-            <div style={cardStyle}>
-                <h2 style={{ borderBottom: '2px solid black', paddingBottom: '10px' }}>{ticket.title}</h2>
-                <div style={{ marginBottom: '20px' }}>
-                    <p style={{ margin: '5px 0' }}><strong>Status:</strong> <span style={{ padding: '2px 8px', background: 'black', color: 'white', textTransform: 'uppercase', marginLeft: '5px' }}>{ticket.status}</span></p>
-                    <p style={{ margin: '5px 0' }}><strong>Priority:</strong> {ticket.priority}</p>
-                    <p style={{ margin: '5px 0' }}><strong>Customer Email:</strong> {ticket.customer_email || (ticket.created_by && ticket.created_by.email) || 'N/A'}</p>
-                    <div style={{ margin: '15px 0', padding: '10px', backgroundColor: '#f0f0f0', border: '1px solid black' }}>
-                        {ticket.assigned_to ? (
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>Assigned to: {ticket.assigned_to.email}</p>
-                        ) : (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <p style={{ margin: 0, fontWeight: 'bold', color: '#d32f2f' }}>Unassigned</p>
-                                {isAgentOrAdmin && (
-                                    <button onClick={handleClaimTicket} style={{ ...btnStyle, padding: '5px 15px', backgroundColor: '#d32f2f', color: 'white', border: '2px solid black' }}>CLAIM TICKET</button>
-                                )}
-                            </div>
+        <div className="page">
+            <div className="page-head">
+                <div>
+                    <h1>#{ticket.id} {ticket.title}</h1>
+                    <div className="row" style={{ marginTop: 8 }}>
+                        <Badge value={ticket.status} />
+                        <Badge kind="priority" value={ticket.priority} />
+                        <span className="badge">{ticket.category}</span>
+                        <SlaBadge ticket={ticket} />
+                        {ticket.escalated && <span className="badge badge-sla-breached">Escalated</span>}
+                        {ticket.duplicate_of && (
+                            <Link className="badge" to={`/tickets/${ticket.duplicate_of}`}>Duplicate of #{ticket.duplicate_of}</Link>
                         )}
-                    </div>
-                    <div style={{ marginTop: '15px' }}>
-                        <strong>Description:</strong>
-                        <p style={{ whiteSpace: 'pre-wrap', background: '#f9f9f9', padding: '10px', border: '1px solid black', marginTop: '5px' }}>{ticket.description}</p>
                     </div>
                 </div>
+                <button onClick={() => navigate(-1)}>Back</button>
+            </div>
 
-                {/* Threaded Conversation */}
-                <div style={{ marginTop: '20px', borderTop: '2px dashed black', paddingTop: '20px' }}>
-                    <h3 style={{ textTransform: 'uppercase', marginTop: 0 }}>Conversation Activity</h3>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px' }}>
-                        {ticket.comments && ticket.comments.length > 0 ? (
-                            ticket.comments.map(comment => {
-                                const isStaff = comment.author.role === 'admin' || comment.author.role === 'support_agent';
-                                return (
-                                    <div key={comment.id} style={{
-                                        padding: '15px',
-                                        border: '2px solid black',
-                                        backgroundColor: isStaff ? '#e0e0e0' : 'white',
-                                        alignSelf: isStaff ? 'flex-start' : 'flex-end',
-                                        width: '80%',
-                                        boxShadow: isStaff ? '-4px 4px 0px black' : '4px 4px 0px black'
-                                    }}>
-                                        <div style={{ fontWeight: 'bold', borderBottom: '1px solid #ccc', paddingBottom: '5px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between' }}>
-                                            <span>{isStaff ? `Agent: ${comment.author.username}` : `Customer: ${comment.author.username}`}</span>
-                                            <span style={{ fontSize: '0.8rem', fontWeight: 'normal' }}>{new Date(comment.created_at).toLocaleString()}</span>
-                                        </div>
-                                        <div style={{ whiteSpace: 'pre-wrap' }}>{comment.body}</div>
-                                    </div>
-                                );
-                            })
-                        ) : (
-                            <div style={{ padding: '10px', fontStyle: 'italic', color: '#666' }}>No replies yet.</div>
-                        )}
+            <div className="split">
+                <div>
+                    <div className="card">
+                        <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{ticket.description}</p>
                     </div>
 
-                    {/* AI Toast Notification */}
-                    {toastMessage && (
-                        <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e6ffe6', border: '2px solid #00cc00', color: '#006600', fontWeight: 'bold' }}>
-                            ✨ {toastMessage}
+                    <h3 className="section-title">Conversation</h3>
+                    <div className="thread">
+                        {ticket.comments.length === 0 && <p className="muted">No replies yet.</p>}
+                        {ticket.comments.map((c) => {
+                            const staff = c.author.role !== 'customer';
+                            const cls = c.is_internal ? 'comment-internal' : staff ? 'comment-agent' : 'comment-customer';
+                            return (
+                                <div key={c.id} className={`comment ${cls}`}>
+                                    <div className="comment-head">
+                                        <span>
+                                            {staff ? 'Agent' : 'Customer'}: {c.author.username}{' '}
+                                            {c.is_internal && <span className="badge badge-internal">Internal note</span>}
+                                        </span>
+                                        <span style={{ fontWeight: 'normal' }}>{when(c.created_at)}</span>
+                                    </div>
+                                    <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {draft && (
+                        <div className="callout callout-ai">
+                            <strong>AI draft</strong> ({draft.source === 'llm' ? 'Gemini' : 'retrieval fallback'}) · suggested
+                            status: <strong>{label(draft.suggested_status)}</strong>
+                            {draft.grounded_on.length > 0 ? (
+                                <ul>
+                                    {draft.grounded_on.map((g) => (
+                                        <li key={g.id}>
+                                            grounded on <Link to={`/tickets/${g.id}`}>#{g.id} {g.title}</Link>{' '}
+                                            <span className="muted">({Math.round(g.score * 100)}% similar)</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : <div className="muted">No similar resolved tickets found. Review carefully.</div>}
                         </div>
                     )}
 
-                    {/* Reply Box for Everyone */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <textarea
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Type your reply here..."
-                            style={{ ...inputStyle, minHeight: '80px', marginBottom: '0' }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            {isAgentOrAdmin ? (
-                                <button
-                                    onClick={handleSuggestReply}
-                                    disabled={isGenerating}
-                                    style={{ ...btnStyle, backgroundColor: '#6200ea', color: 'white', opacity: isGenerating ? 0.7 : 1 }}
-                                >
-                                    {isGenerating ? '⏳ GENERATING DRAFT...' : '✨ ASK AI COPILOT'}
-                                </button>
-                            ) : <div />}
-                            <button onClick={handleAddComment} style={{ ...btnStyle }}>Send Reply</button>
+                    <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows="5"
+                              placeholder={internal ? 'Internal note (customer will not see this)…' : 'Write a reply…'} />
+                    <div className="row" style={{ justifyContent: 'space-between', marginTop: 10 }}>
+                        <div className="row">
+                            {isStaff && (
+                                <>
+                                    <button className="btn-ai" onClick={askCopilot} disabled={drafting}>
+                                        {drafting ? 'Drafting…' : 'Ask AI copilot'}
+                                    </button>
+                                    <label className="checkbox">
+                                        <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+                                        Internal note
+                                    </label>
+                                </>
+                            )}
                         </div>
+                        <button className="btn-primary" onClick={sendReply} disabled={sending || !reply.trim()}>
+                            {sending ? 'Sending…' : internal ? 'Add note' : 'Send reply'}
+                        </button>
                     </div>
+                    {!isStaff && ticket.status === 'resolved' && (
+                        <p className="muted">Still not fixed? Reply above and the ticket reopens automatically.</p>
+                    )}
                 </div>
 
-                {/* Status Controls for Agents/Admins only */}
-                {isAgentOrAdmin && (
-                    <div style={{ borderTop: '2px dashed black', paddingTop: '20px', marginTop: '30px' }}>
-                        <h3 style={{ textTransform: 'uppercase', marginTop: 0 }}>Ticket Controls</h3>
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                            <label style={{ fontWeight: 'bold' }}>Update Status:</label>
-                            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, width: 'auto', marginBottom: 0 }}>
-                                <option value="open">Open</option>
-                                <option value="in_progress">In Progress</option>
-                                <option value="resolved">Resolved</option>
-                                <option value="closed">Closed</option>
-                            </select>
-                            <button onClick={handleUpdateStatus} style={btnStyle}>Save Status</button>
-                        </div>
+                <aside>
+                    <div className="card">
+                        <dl className="kv">
+                            <dt>Customer</dt><dd>{ticket.created_by?.email || '—'}</dd>
+                            <dt>Assignee</dt><dd>{ticket.assigned_to ? ticket.assigned_to.username : 'Unassigned'}</dd>
+                            <dt>Created</dt><dd>{when(ticket.created_at)}</dd>
+                            <dt>First reply</dt>
+                            <dd>{ticket.first_response_at ? when(ticket.first_response_at)
+                                : deadline(ticket.first_response_due)}</dd>
+                            <dt>Resolution</dt>
+                            <dd>{ticket.resolved_at ? when(ticket.resolved_at)
+                                : deadline(ticket.resolution_due)}</dd>
+                            {ticket.csat_score && (
+                                <>
+                                    <dt>Rating</dt>
+                                    <dd title={`${ticket.csat_score} / 5`}>
+                                        {stars(ticket.csat_score)}
+                                        {ticket.csat_comment && <div className="muted">“{ticket.csat_comment}”</div>}
+                                    </dd>
+                                </>
+                            )}
+                        </dl>
+                        {!isStaff && active && (
+                            <button className="btn-danger" onClick={closeTicket} style={{ marginTop: 12 }}>Close ticket</button>
+                        )}
                     </div>
-                )}
+
+                    {!isStaff && !active && !ticket.csat_score && (
+                        <RatingCard ticketId={ticket.id} onRated={setTicket} />
+                    )}
+
+                    {isStaff && <StaffControls ticket={ticket} onSaved={setTicket} />}
+
+                    <div className="card">
+                        <h3 style={{ marginTop: 0 }}>Activity</h3>
+                        <ul className="timeline">
+                            {ticket.events.map((e) => (
+                                <li key={e.id}>
+                                    <strong>{e.actor}</strong> {(EVENT_TEXT[e.kind] || (() => e.kind))(e)}
+                                    <div className="muted">{when(e.created_at)}</div>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </aside>
             </div>
         </div>
     );

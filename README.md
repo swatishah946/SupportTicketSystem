@@ -1,180 +1,161 @@
-# 🎫 NexusDesk: AI-Powered Support Ticketing System
+# NexusDesk
 
-**Status:** 🔴 Offline (Previously deployed on Microsoft Azure)
-> **Note:** The live production environment (hosted via Azure VM & DNS) was spun down to conserve cloud credits. The complete Dockerized deployment architecture, including Nginx configurations, is fully documented below and reproducible locally.
+**A customer-support (helpdesk) web app with deadlines, smart ticket routing, AI help for agents, and live updates.**
+Django REST Framework · React · PostgreSQL · Redis · Celery · Django Channels (WebSockets) · Google Gemini · Docker
 
-NexusDesk is a professional-grade, full-stack support platform built to bridge the gap between customers and support teams. It features a robust **Django REST API**, a high-performance **React (Vite)** frontend, and is fully containerized with **Docker** for cloud-native deployment on **Microsoft Azure**.
+[![CI](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml)
 
-## 📸 Project Gallery
+![Admin dashboard](screenshots/admin-analytics.png)
 
-![Dashboard Screenshot](./screenshots/dashboard.png)
-*Stats Dashboard rendering DB-aggregated metrics from PostgreSQL.*
+## What it does
 
-![Create Ticket Screenshot](./screenshots/create_ticket.png)
-*Ticket Creation form with LLM-powered auto-suggestions (Gemini) running in the background.*
+1. A **customer** describes a problem. While they type, the app warns them if they already reported the same thing,
+   and AI suggests a category (billing, technical, account, general) and a priority.
+2. The ticket gets **deadlines** based on priority (for example, a critical ticket must get a first reply within
+   1 hour and be solved within 4 hours) and is **assigned automatically** to the least busy agent who handles that category.
+3. The **agent** can ask the AI to draft a reply. The draft is based on how the team solved similar tickets before,
+   and the agent sees which past tickets it used. Agents can also leave private notes that customers never see.
+4. Everyone sees changes **instantly**: new replies, status changes and assignments appear without refreshing
+   the page, with a small pop-up for things that need your attention.
+5. If a ticket misses its deadline, a background job **escalates** it (raises its priority) every few minutes.
+6. When a ticket is solved, the customer **rates** the support from 1 to 5. Admins see deadlines met, average
+   rating, response times and each agent's workload on a dashboard.
 
-## 🛠️ Tech Stack & Infrastructure
+## Screenshots
 
-I containerized the entire application using **Docker & Docker Compose** to ensure seamless transitions between development and production.
+| Agent queue (most urgent first) | AI reply draft, showing the past tickets it used |
+|---|---|
+| ![Agent queue](screenshots/agent-queue.png) | ![AI copilot](screenshots/agent-ticket-copilot.png) |
+| **New ticket: AI suggestion + "already reported?" warning** | **Live update: agent's reply appears with no refresh** |
+| ![New ticket](screenshots/customer-new-ticket.png) | ![Live update](screenshots/live-update.png) |
 
-* **Backend:** Django 5.x, Django REST Framework (DRF), WhiteNoise (Static Files)
-* **Frontend:** React 18+ (Vite), Axios, CSS (Custom Blueprint Theme)
-* **Database:** PostgreSQL (Production), SQLite (Development)
-* **AI Integration:** Google Gemini 2.5 Flash via the `google-genai` SDK
-* **Cloud & DevOps:** Microsoft Azure (Ubuntu VM), Azure DNS, Nginx, Google OAuth2
+Screenshots are taken automatically by a GitHub Actions workflow that starts the real app with demo data. The
+live-update screenshot doubles as a test: an agent replies in one browser and the workflow fails unless the reply
+appears on the customer's already-open page.
 
-### 🏗️ Deployment Architecture
-```text
-Client Request ➔ Azure DNS ➔ Nginx (Reverse Proxy) ➔ Docker Compose Network
-                                                        ├── ⚙️ Django API (Backend)
-                                                        ├── ⚛️ Vite (Frontend)
-                                                        └── 🗄️ PostgreSQL (Database)
+## How it works
+
+```mermaid
+flowchart LR
+    B[Browser<br/>React app] -->|HTTPS + WebSocket<br/>login cookie| N[nginx]
+    N -->|/api, /ws| D[Django on Uvicorn<br/>REST API + WebSockets]
+    D --> P[(PostgreSQL)]
+    D <--> R[(Redis)]
+    R <--> W[Celery worker<br/>AI jobs]
+    BT[Celery beat<br/>timer] -->|every 5 min: escalate overdue| R
+    W -.-> G[Google Gemini]
+    D -.->|reply drafts| G
 ```
 
-## ✨ Core Features
+| Part | What it does, in simple words |
+|---|---|
+| **React** | The web pages. Talks to the backend through the REST API and keeps one WebSocket open for live updates. |
+| **nginx** | The front door. Serves the React files and passes `/api` and `/ws` requests to Django, so everything comes from one address. |
+| **Django REST Framework** | The API: tickets, replies, permissions, deadlines, analytics. All rules about who can change what live in one file (`services/workflow.py`). |
+| **Uvicorn** | The server that runs Django. It can handle normal requests and long-lived WebSocket connections. |
+| **Django Channels** | Adds WebSockets to Django. When a ticket changes, the backend sends a short "ticket #12 changed" message to the people allowed to see it. The page then re-loads that ticket through the normal API, so permission rules are never bypassed. |
+| **Redis** | A fast in-memory store used as a message board: the web servers and the background worker post messages there so any of them can reach any connected browser. Also holds the job queue and cache. |
+| **Celery** | Runs slow work in the background (calling the AI for each new ticket) so creating a ticket never waits for the AI. Celery beat is its timer, used for the escalation job. |
+| **PostgreSQL** | The database. |
+| **Gemini** | The AI model. Optional: without an API key the app uses simple keyword rules instead, so it always works. |
 
-1. **AI Support Agent & Smart Categorization:** When a user describes a problem, the integrated **Gemini AI Support Agent** analyzes the text in real-time. It doesn't just categorize the ticket; it acts as a first-line responder by generating helpful, context-aware solution suggestions and pre-filling technical metadata like Priority and Category.
-2. **Google OAuth2 Authentication:** Secure, one-tap login for users, fully configured for production environments via Azure DNS mapping.
-3. **Role-Based Access Control (RBAC):** Custom `AccountAdapter` logic directs users to specific interfaces; Staff are routed to the **Admin Management Panel**, while users go to the **Customer Dashboard**.
-4. **Database-Level Performance:** Dashboard statistics utilize Django ORM's `aggregate` and `annotate` functions to push heavy computations to PostgreSQL for maximum efficiency.
-5. **Professional Cloud Deployment:** Hosted on an Azure Virtual Machine with a dedicated DNS label, ensuring a stable and professional public endpoint.
+## Results you can check yourself
 
-## 🧠 Design Decisions: The AI Agent Logic
+| What | Result | How to check |
+|---|---|---|
+| Automated tests | **98 tests, about 97% of the backend code covered**, run on every push against PostgreSQL | `pytest --cov` in `backend/`, or the CI badge above |
+| Slow database pattern fixed (N+1 queries) | The ticket list used to run ~6 database queries **per ticket** (303 queries for 51 tickets). It now runs **2 queries per page**, no matter how many tickets | `tests/test_platform.py` fails if the count ever grows with the data |
+| AI never blocks the user | Creating a ticket does not wait for Gemini; AI work runs in the background with automatic retries | `tests/test_tasks.py` checks no AI call happens during the request |
+| Live updates are private | Customers only receive events for their own tickets, and never for private notes | `tests/test_websockets.py`, plus a CI check through the real nginx |
 
-For the AI integration, I chose **Google's Gemini 2.5 Flash**. I specifically selected it because:
+How well the AI's suggestions match human judgement is measured separately, with honest caveats, in
+[`backend/evals/README.md`](backend/evals/README.md).
 
-* **Inference Speed:** Crucial for a fluid UI experience where the "Support Agent" provides suggestions while the user is still interacting with the form.
-* **Instruction Following:** It natively supports strict JSON-mode outputs, ensuring the backend always receives a structured dictionary of categories and agent responses rather than messy conversational text.
-* **Graceful Degradation:** If the AI service is unreachable, the system automatically falls back to manual entry mode, ensuring the core ticketing service remains 100% available.
+## Security, in plain words
 
-## 🐳 Docker & Containerization
+- **Roles:** customers, agents and admins. Each role may change only certain fields, enforced on the server. A customer
+  can edit or close their own ticket but cannot change its priority, assign it, or see other customers' tickets.
+- **Login tokens are kept in httpOnly cookies.** JavaScript cannot read them, so a malicious script injected into the page
+  cannot steal them. Tokens expire after 15 minutes and are renewed silently.
+- **Cookies are `SameSite=Lax`**, so other websites cannot make the browser send them along with a form submission (this stops CSRF attacks).
+- **WebSockets check the `Origin` header**, so another website cannot open a live connection using your login.
+  The socket also closes when the login token expires, and the page reconnects with a fresh one.
+- **Sign in with Google:** Google gives the browser a signed token; the server checks Google's signature and that the
+  token was made for this app before logging anyone in. Only the public Client ID is needed, never a secret.
+- **Rate limits** on login and AI endpoints, and production settings pass Django's deployment checklist (`manage.py check --deploy`).
 
-**Why Docker?** Consistent environments across development and production with multi-service orchestration.
+## Run it
 
-### Services
-- **PostgreSQL:** Database (port 5432, internal only)
-- **Django Backend:** API server (port 8000, proxied through Nginx)
-- **React Frontend:** Vite dev server (port 5173)
-- **Nginx:** Reverse proxy, SSL/TLS termination (ports 80/443)
-
-### Docker Compose Commands
+**With Docker (recommended)**
 ```bash
-docker-compose up --build           # Start all services
-docker-compose down                 # Stop services
-docker-compose logs -f              # View logs
-docker-compose exec backend python manage.py migrate  # Run migrations
+cp .env.example .env              # optional: add GEMINI_API_KEY and GOOGLE_CLIENT_ID
+docker compose up --build         # app at http://localhost:5173 (reloads when you edit code)
+docker compose exec backend python manage.py seed_demo   # demo users and 120 tickets
 ```
+Demo logins (password `NexusDemo!2026`): `admin@nexusdesk.dev`, `agent1@nexusdesk.dev`, `customer1@nexusdesk.dev`.
+Open two browsers (for example one as an agent and one as a customer) to see live updates.
 
-## ☁️ Azure Cloud Deployment
-
-**VM Configuration:**
-- Image: Ubuntu 22.04 LTS
-- Region: Southeast Asia
-- DNS: nexusdesk-support.southeastasia.cloudapp.azure.com
-- Network Security: SSH (port 22), HTTP (port 80), HTTPS (port 443)
-
-**Quick Deploy:**
+**Production-style** (nginx, Uvicorn, PostgreSQL, Redis, Celery worker and beat):
 ```bash
-# SSH into VM
-ssh azureuser@nexusdesk-support.southeastasia.cloudapp.azure.com
-
-# Clone and deploy
-git clone https://github.com/swatishah946/SupportTicketSystem.git
-cd SupportTicketSystem
-cp .env.example .env  # Edit with production values
-sudo docker-compose up -d
+docker compose -f docker-compose.prod.yml up -d --build  # http://localhost
 ```
 
-## 🔄 Nginx Reverse Proxy
+**Google sign-in:** create an OAuth Client ID of type "Web application" in Google Cloud Console, add your site's address
+(for example `http://localhost:5173` and `http://localhost`) under "Authorized JavaScript origins", and put the ID in
+`GOOGLE_CLIENT_ID` in `.env`. The Google button appears automatically.
 
-**Key Features:**
-- SSL/TLS termination with automatic HTTPS redirect
-- Load balancing across backend/frontend services
-- Gzip compression for static assets
-- Security headers (HSTS, X-Frame-Options, etc.)
-- Request timeouts optimized for AI API calls
-
-```nginx
-# Backend API proxy (with AI request timeout)
-location /api/ {
-    proxy_pass http://backend;
-    proxy_connect_timeout 30s;
-    proxy_read_timeout 30s;
-}
-
-# Static files caching (30 days)
-location /static/ {
-    proxy_pass http://backend;
-    expires 30d;
-}
-```
-
-## 🚀 Installation & Setup
-
-### **Local Development**
-
-1. **Clone the repository:**
+**Checks**
 ```bash
-git clone https://github.com/swatishah946/SupportTicketSystem.git
-cd SupportTicketSystem
+cd backend && pytest --cov            # tests
+cd frontend && npm run lint && npm run build
 ```
 
-2. **Set up the Environment Variables:**
-Create a `.env` file in the root directory of the project and populate it with your API keys and Django secrets:
+## API overview
 
-```env
-VITE_API_URL=http://localhost:8000/api
-GEMINI_API_KEY=your_api_key_here
-GOOGLE_CLIENT_ID=your_google_id
-SECRET_KEY=your_secure_django_key
+Interactive documentation is served at `/api/docs/`.
+
+| Endpoint | Who | Purpose |
+|---|---|---|
+| `GET /api/tickets/` | everyone (customers see their own) | list with filters: status, priority, category, `assigned_to=me`, `unassigned`, `sla_breached`, search |
+| `POST /api/tickets/` | everyone | create a ticket (deadlines and assignment are set here; AI runs afterwards) |
+| `PATCH /api/tickets/:id/` | depends on role | update; each role may change only certain fields |
+| `POST /api/tickets/:id/comments/` | everyone (private notes: staff only) | reply or private note |
+| `POST /api/tickets/:id/rate/` | the customer, once solved | rating 1–5 with optional comment |
+| `POST /api/tickets/classify/` · `/similar/` | everyone, rate-limited | AI suggestion · "already reported?" check |
+| `POST /api/tickets/:id/suggest_reply/` | staff, rate-limited | AI draft reply plus the past tickets it used |
+| `GET /api/analytics/` | admin | dashboard numbers |
+| `POST /api/auth/google/` · `GET /api/auth/config/` | public | Google sign-in · public settings (the Google Client ID) |
+| `ws://…/ws/` | logged-in users | live "ticket changed" events |
+
+## Project layout
+
+```
+backend/
+  tickets/
+    views.py             API endpoints (thin: they call the services below)
+    services/workflow.py all changes to tickets: permissions, status rules, deadlines, history, live events
+    services/sla.py      deadline rules
+    services/assignment.py  pick the least busy agent with the right skills
+    services/search.py   find similar tickets (word matching, plus AI embeddings when a key is set)
+    services/ai.py       Gemini calls with timeouts, caching and a rule-based fallback
+    tasks.py             background jobs (AI enrichment, escalation)
+    consumers.py         WebSocket endpoint
+    realtime.py          sends live events after a change is saved
+    auth_views.py        password, sign-up and Google sign-in
+  tests/                 98 automated tests
+  evals/                 sample tickets used to measure the AI
+frontend/src/
+  context/RealtimeProvider.jsx   the WebSocket connection, reconnects, pop-ups
+  components/, pages/            screens
 ```
 
-3. **Build and Launch:**
-Open your terminal in the root directory and run a single Docker command:
+## Known limitations and next steps
 
-```bash
-docker-compose up --build
-```
-
-4. **Run Migrations:**
-```bash
-docker-compose exec backend python manage.py migrate
-docker-compose exec backend python manage.py createsuperuser
-```
-
-5. **Access the Application:**
-- Frontend: http://localhost:3000
-- API: http://localhost:8000/api
-- Admin Panel: http://localhost:8000/admin
-
-## 🔐 Security
-
-✅ SSL/TLS encryption via Nginx  
-✅ OAuth2 authentication  
-✅ Environment variables for secrets  
-✅ PostgreSQL in isolated container  
-✅ CORS restrictions  
-✅ Security headers in Nginx  
-
-## 📊 Performance Metrics
-
-- Frontend Load Time: ~1.2s
-- API Response Time: ~200ms (AI requests: 500-2000ms)
-- Database Query Time: <50ms
-- Nginx Throughput: ~1000 requests/second
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 📞 Support
-
-For issues, questions, or feature requests, please visit the [GitHub Issues](https://github.com/swatishah946/SupportTicketSystem/issues) page.
+- Deadlines count every hour, including nights and weekends; a business-hours calendar would be more realistic.
+- Every agent receives every ticket event; with thousands of agents you would split them into per-team groups.
+- Similar-ticket search compares against up to 1,000 recent tickets in Python; at larger scale this would move into
+  PostgreSQL (full-text search and the pgvector extension).
+- The AI evaluation set is small (96 tickets) and written by me; real ticket data would give a more trustworthy number.
 
 ---
-
-**Built with ❤️ by Swati Shah**
+Built by **Swati Shah**.

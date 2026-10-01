@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py311"
+extend-exclude = ["tickets/migrations"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]
+
+[lint.per-file-ignores]
+"ticket_system/settings_test.py" = ["F403", "F405", "E402"]
+"evals/*" = ["E402"]
+"benchmarks/*" = ["E402"]

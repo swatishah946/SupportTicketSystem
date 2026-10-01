@@ -1,129 +1,73 @@
 import React, { useState } from 'react';
-import api from '../api';
+import api, { errorMessage } from '../api';
+import { CATEGORIES } from '../lib/format';
 import Dashboard from './Dashboard';
 import TicketList from './TicketList';
 
 const AdminDashboard = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [specialties, setSpecialties] = useState([]);
     const [loading, setLoading] = useState(false);
-
-    const mockAgents = [
-        { name: 'Agent Smith', open_tickets: 4, resolved_today: 12 },
-        { name: 'Agent Neo', open_tickets: 2, resolved_today: 5 },
-        { name: 'Agent Trinity', open_tickets: 6, resolved_today: 15 },
-    ];
+    const [message, setMessage] = useState(null);
 
     const handleCreateAgent = async (e) => {
         e.preventDefault();
         setLoading(true);
+        setMessage(null);
         try {
-            await api.post('/auth/create-agent/', { email, password });
-            alert('Agent successfully created!');
+            const res = await api.post('/auth/create-agent/', { email, password, specialties });
+            setMessage({ ok: true, text: `Agent ${res.data.email} created.` });
             setEmail('');
             setPassword('');
-        } catch (error) {
-            console.error('Agent creation failed', error);
-            alert('Failed to create agent. See console for details.');
+            setSpecialties([]);
+        } catch (err) {
+            setMessage({ ok: false, text: errorMessage(err, 'Failed to create agent.') });
         } finally {
             setLoading(false);
         }
     };
 
-    const inputStyle = {
-        padding: '10px',
-        marginRight: '10px',
-        border: '2px solid black',
-        fontFamily: 'monospace',
-        borderRadius: '0',
-    };
-
-    const btnStyle = {
-        padding: '10px 20px',
-        backgroundColor: 'black',
-        color: 'white',
-        border: 'none',
-        boxShadow: '4px 4px 0px #888',
-        cursor: 'pointer',
-        fontWeight: 'bold',
-        fontFamily: 'monospace',
-        textTransform: 'uppercase',
-    };
-
     return (
-        <div style={{ padding: '20px', fontFamily: 'monospace' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h1 style={{ textTransform: 'uppercase', margin: 0 }}>Admin Dashboard</h1>
-                <a href={`${import.meta.env.VITE_API_URL.replace('/api', '')}/admin/`} target="_blank" rel="noopener noreferrer">
-                    <button style={btnStyle}>
-                        OPEN DJANGO ADMIN (USER MANAGEMENT)
-                    </button>
-                </a>
+        <div className="page">
+            <div className="page-head">
+                <h1>Admin dashboard</h1>
+                <div className="row">
+                    <a href="/api/docs/" target="_blank" rel="noopener noreferrer"><button>API docs</button></a>
+                    <a href="/admin/" target="_blank" rel="noopener noreferrer"><button>Django admin</button></a>
+                </div>
             </div>
 
-            <div style={{ marginTop: '20px', padding: '15px', border: '2px dashed black', backgroundColor: '#fffbe6' }}>
-                <h3 style={{ marginTop: 0 }}>Advanced System Management</h3>
-                <p>Need to manage User Accounts, Agent Roles, or wipe data? Access the raw database console here:</p>
-                <a href={`${import.meta.env.VITE_API_URL.replace('/api', '')}/admin/`} target="_blank" rel="noopener noreferrer">
-                    <button style={{ padding: '10px 20px', backgroundColor: '#d32f2f', color: 'white', border: 'none', boxShadow: '4px 4px 0px #888', cursor: 'pointer', fontWeight: 'bold', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-                        Open Django Admin Panel
-                    </button>
-                </a>
-            </div>
+            <Dashboard />
 
-            <section style={{
-                marginBottom: '40px',
-                padding: '20px',
-                border: '2px solid black',
-                boxShadow: '4px 4px 0px black',
-                backgroundColor: 'white'
-            }}>
-                <h2 style={{ textTransform: 'uppercase', marginTop: 0 }}>Onboard New Support Agent</h2>
-                <form onSubmit={handleCreateAgent} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <input
-                        type="email"
-                        placeholder="Agent Email"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        style={inputStyle}
-                        required
-                    />
-                    <input
-                        type="password"
-                        placeholder="Secure Password"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        style={inputStyle}
-                        required
-                    />
-                    <button type="submit" style={btnStyle} disabled={loading}>
-                        {loading ? 'Creating...' : 'Create Agent'}
-                    </button>
-                </form>
-            </section>
-
-            <section style={{ marginBottom: '40px' }}>
-                <h2 style={{ textTransform: 'uppercase', borderBottom: '2px solid black', paddingBottom: '10px' }}>System Overview</h2>
-                <Dashboard />
-            </section>
-
-            <section style={{ marginBottom: '40px' }}>
-                <h2 style={{ textTransform: 'uppercase', borderBottom: '2px solid black', paddingBottom: '10px' }}>Agent Performance Overview</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '20px' }}>
-                    {mockAgents.map((agent, index) => (
-                        <div key={index} style={{ padding: '15px', border: '2px solid black', boxShadow: '4px 4px 0px black', backgroundColor: 'white' }}>
-                            <h3 style={{ textTransform: 'uppercase', marginTop: 0 }}>{agent.name}</h3>
-                            <p style={{ margin: '5px 0' }}><strong>Open Tickets:</strong> {agent.open_tickets}</p>
-                            <p style={{ margin: '5px 0' }}><strong>Resolved Today:</strong> {agent.resolved_today}</p>
-                        </div>
+            <h2 className="section-title">Onboard a support agent</h2>
+            <form onSubmit={handleCreateAgent} className="row card">
+                <input type="email" placeholder="agent@company.com" value={email}
+                       onChange={(e) => setEmail(e.target.value)} required style={{ flex: '1 1 220px' }} />
+                <input type="password" placeholder="Password (min 8 chars)" value={password}
+                       onChange={(e) => setPassword(e.target.value)} required minLength={8} style={{ flex: '1 1 220px' }} />
+                <div className="row" style={{ flexBasis: '100%' }}>
+                    <span className="muted">Routes these categories to them first:</span>
+                    {CATEGORIES.map((c) => (
+                        <label key={c} className="checkbox">
+                            <input type="checkbox" checked={specialties.includes(c)}
+                                   onChange={() => setSpecialties((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]))} />
+                            {c}
+                        </label>
                     ))}
                 </div>
-            </section>
+                <button type="submit" className="btn-primary" disabled={loading}>
+                    {loading ? 'Creating…' : 'Create agent'}
+                </button>
+                {message && <span className={message.ok ? '' : 'error'}>{message.text}</span>}
+            </form>
 
-            <section>
-                <h2 style={{ textTransform: 'uppercase', borderBottom: '2px solid black', paddingBottom: '10px' }}>All Tickets</h2>
-                <TicketList />
-            </section>
+            <h2 className="section-title">SLA breaches</h2>
+            <TicketList preset={{ sla_breached: true, ordering: 'resolution_due' }} showFilters={false}
+                        emptyText="No active ticket is past its SLA." />
+
+            <h2 className="section-title">All tickets</h2>
+            <TicketList />
         </div>
     );
 };
