@@ -3,9 +3,9 @@
     python benchmarks/bench_api.py --tickets 2000
 
 Runs in-process against a fresh SQLite database through Django's test client,
-so latency excludes network and reverse-proxy time. It answers "how does the
-API scale with data size?", not "how many requests/second can the deployment
-serve" (use benchmarks/locustfile.py against the Docker stack for that).
+so latency excludes network and reverse-proxy time. Its main purpose is to
+show the number of SQL queries per request stays constant as data grows;
+the timings are only indicative (they depend on the machine).
 """
 
 import argparse

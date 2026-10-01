@@ -9,8 +9,6 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 # --- build: static production bundle -----------------------------------------
 FROM dev AS build
-ARG VITE_GOOGLE_CLIENT_ID=""
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 RUN npm run build
 
 # --- prod: nginx serves the SPA and reverse-proxies the API ------------------

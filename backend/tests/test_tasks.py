@@ -26,7 +26,8 @@ def test_create_does_not_wait_for_llm(monkeypatch, customer, django_capture_on_c
         with django_capture_on_commit_callbacks(execute=False) as callbacks:
             resp = client_for(customer).post("/api/tickets/", {"title": "Hi", "description": "cannot login"},
                                              format="json").json()
-        assert calls == [] and len(callbacks) == 1  # request finished before any LLM call
+        # Request finished before any LLM call; queued for after commit: the AI job + a live notification.
+        assert calls == [] and len(callbacks) == 2
         assert resp["priority"] != "critical"  # instant rule-based triage
         callbacks[0]()  # the worker runs the job
     ticket = Ticket.objects.get(pk=resp["id"])

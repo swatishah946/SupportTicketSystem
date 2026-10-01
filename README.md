@@ -1,208 +1,161 @@
 # NexusDesk
 
-**An AI-assisted helpdesk with SLA enforcement, skills-based routing and retrieval-grounded reply drafting.**
-Django REST · React · PostgreSQL · Celery + Redis · Gemini · Docker
+**A customer-support (helpdesk) web app with deadlines, smart ticket routing, AI help for agents, and live updates.**
+Django REST Framework · React · PostgreSQL · Redis · Celery · Django Channels (WebSockets) · Google Gemini · Docker
 
 [![CI](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/swatishah946/SupportTicketSystem/actions/workflows/ci.yml)
 
-NexusDesk covers the full life of a support ticket. A customer describes a problem and
-is warned if they have already reported it. The ticket is triaged and routed to the
-least-busy agent who specialises in that kind of problem, with an SLA clock running from
-the moment it is created. The agent drafts a reply with an AI copilot that cites similar
-tickets the team has already solved. When it's resolved, the customer rates the support.
-Every change is recorded in an audit trail, and anything past its SLA is escalated
-automatically by a background scheduler.
+![Admin dashboard](screenshots/admin-analytics.png)
 
-![Admin analytics](screenshots/admin-analytics.png)
+## What it does
 
-## Measured results
+1. A **customer** describes a problem. While they type, the app warns them if they already reported the same thing,
+   and AI suggests a category (billing, technical, account, general) and a priority.
+2. The ticket gets **deadlines** based on priority (for example, a critical ticket must get a first reply within
+   1 hour and be solved within 4 hours) and is **assigned automatically** to the least busy agent who handles that category.
+3. The **agent** can ask the AI to draft a reply. The draft is based on how the team solved similar tickets before,
+   and the agent sees which past tickets it used. Agents can also leave private notes that customers never see.
+4. Everyone sees changes **instantly**: new replies, status changes and assignments appear without refreshing
+   the page, with a small pop-up for things that need your attention.
+5. If a ticket misses its deadline, a background job **escalates** it (raises its priority) every few minutes.
+6. When a ticket is solved, the customer **rates** the support from 1 to 5. Admins see deadlines met, average
+   rating, response times and each agent's workload on a dashboard.
 
-Every number below is reproducible from this repository. See `backend/evals/` and `backend/benchmarks/`.
+## Screenshots
 
-| Area | Result | How it was measured |
-|---|---|---|
-| Tests | **79 tests, 97% line coverage**, green on SQLite and PostgreSQL 16 | `pytest --cov` (CI enforces ≥ 90%) |
-| Ticket creation | **never waits on the LLM**: triage and embeddings run in a Celery worker with retry and backoff | `tests/test_tasks.py` asserts no LLM call happens during the request |
-| Query efficiency | Ticket list: **2 SQL queries per request at any page size** (was ~6 per ticket: 303 queries for 51 tickets) | query-count regression tests; the "before" figure was measured on the original code |
-| API latency (2,000 tickets, PostgreSQL) | list p95 **27 ms**, detail p95 **14 ms**, analytics p95 **24 ms** | `benchmarks/bench_api.py`, in-process, 50 runs each |
-| Load test (gunicorn, 3 workers, Postgres and load generator on the same 2 vCPU machine) | 50 concurrent agents, **1,762 requests, 0 errors**, steady-state endpoints p95 **28–40 ms** | Locust, 60 s (`benchmarks/loadtest-stats.csv`) |
-| AI triage (rule-based fallback) | category accuracy **83.3%** (macro-F1 0.84), priority within one level **94.8%** | 96 labelled tickets (`evals/`) |
-| Duplicate detection (lexical) | **6.2% false-positive rate** at the shipped threshold, hit@3 66.7% | leave-intent-out evaluation (`evals/`) |
+| Agent queue (most urgent first) | AI reply draft, showing the past tickets it used |
+|---|---|
+| ![Agent queue](screenshots/agent-queue.png) | ![AI copilot](screenshots/agent-ticket-copilot.png) |
+| **New ticket: AI suggestion + "already reported?" warning** | **Live update: agent's reply appears with no refresh** |
+| ![New ticket](screenshots/customer-new-ticket.png) | ![Live update](screenshots/live-update.png) |
 
-The load-test login p50 was 7.6 s. That comes from Django's deliberately slow password
-hashing (≈0.6 s per hash, 10⁶ PBKDF2 iterations) with 50 logins arriving at once on
-2 CPUs, not from the API. A single login takes about 0.6 s. The LLM and hybrid-retrieval
-numbers need an API key: run `python evals/run_eval.py --classifier llm --retriever hybrid`.
+Screenshots are taken automatically by a GitHub Actions workflow that starts the real app with demo data. The
+live-update screenshot doubles as a test: an agent replies in one browser and the workflow fails unless the reply
+appears on the customer's already-open page.
 
-## Features
-
-**For customers**
-- Live duplicate detection while typing ("is this the same as ticket #42?")
-- AI triage fills in category and priority, and the customer can override it
-- Replying to a resolved ticket reopens it automatically
-- One-click satisfaction survey (1–5 stars + comment) once a ticket is resolved
-
-**For agents**
-- Personal queue sorted by SLA deadline, plus unassigned and breaching views
-- **AI copilot**: drafts a reply grounded in the most similar *resolved* tickets (RAG) and shows which ones it used
-- Internal notes, hidden from customers at the query level (not just in the UI)
-- Reassignment, priority and category changes, duplicate marking, resolution notes
-
-**For admins**
-- Analytics: SLA compliance, average first response and resolution time, and 14-day volume
-- **AI quality metric**: how often agents keep the AI's category or priority (measured on real usage)
-- **Customer satisfaction (CSAT)**: average score, share rated 4–5, response rate, and CSAT per agent
-- Agent workload table (active, breaches, resolved in 7 days) with editable routing specialties
-- OpenAPI docs at `/api/docs/`
-
-**Platform**
-- SLA engine: per-priority first-response and resolution deadlines, with live state (on track, at risk, breached, met)
-- Skills-based routing: the least-loaded agent specialising in the ticket's category, else the least-loaded agent overall
-- Background jobs (Celery + Redis): LLM triage and embeddings after the ticket is saved, with retries and
-  exponential backoff; the AI's triage is applied only to fields the customer left to it and never over an agent's change
-- Celery beat escalates overdue tickets every 5 minutes (idempotent, audited)
-- Append-only audit trail of every status, priority, assignment and duplicate change
-- Status state machine (a closed ticket can only be reopened, never silently "resolved")
-
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
-    B[Browser<br/>React SPA] -->|same origin, httpOnly JWT cookies| N[nginx<br/>static SPA + reverse proxy]
-    N -->|/api /admin| G[gunicorn<br/>Django REST]
-    G --> P[(PostgreSQL)]
-    G --> R[(Redis<br/>cache, throttling,<br/>job queue)]
-    G -.->|reply drafts<br/>12 s timeout| AI[Gemini API]
-    R --> W[Celery worker<br/>triage + embeddings,<br/>retries]
-    W -.-> AI
-    W --> P
-    BT[Celery beat] -->|escalate_overdue<br/>every 5 min| R
+    B[Browser<br/>React app] -->|HTTPS + WebSocket<br/>login cookie| N[nginx]
+    N -->|/api, /ws| D[Django on Uvicorn<br/>REST API + WebSockets]
+    D --> P[(PostgreSQL)]
+    D <--> R[(Redis)]
+    R <--> W[Celery worker<br/>AI jobs]
+    BT[Celery beat<br/>timer] -->|every 5 min: escalate overdue| R
+    W -.-> G[Google Gemini]
+    D -.->|reply drafts| G
 ```
 
-The backend keeps HTTP handling and business rules apart:
+| Part | What it does, in simple words |
+|---|---|
+| **React** | The web pages. Talks to the backend through the REST API and keeps one WebSocket open for live updates. |
+| **nginx** | The front door. Serves the React files and passes `/api` and `/ws` requests to Django, so everything comes from one address. |
+| **Django REST Framework** | The API: tickets, replies, permissions, deadlines, analytics. All rules about who can change what live in one file (`services/workflow.py`). |
+| **Uvicorn** | The server that runs Django. It can handle normal requests and long-lived WebSocket connections. |
+| **Django Channels** | Adds WebSockets to Django. When a ticket changes, the backend sends a short "ticket #12 changed" message to the people allowed to see it. The page then re-loads that ticket through the normal API, so permission rules are never bypassed. |
+| **Redis** | A fast in-memory store used as a message board: the web servers and the background worker post messages there so any of them can reach any connected browser. Also holds the job queue and cache. |
+| **Celery** | Runs slow work in the background (calling the AI for each new ticket) so creating a ticket never waits for the AI. Celery beat is its timer, used for the escalation job. |
+| **PostgreSQL** | The database. |
+| **Gemini** | The AI model. Optional: without an API key the app uses simple keyword rules instead, so it always works. |
 
-```
-backend/tickets/
-├── views.py            thin HTTP layer: auth, validation, query shaping
-├── services/
-│   ├── workflow.py     every write: role permissions, state machine, SLA timestamps, audit events
-│   ├── sla.py          deadlines, live SLA state, breach filter
-│   ├── assignment.py   skills-aware, least-loaded agent
-│   ├── search.py       TF-IDF cosine retrieval, hybrid with embeddings
-│   ├── ai.py           Gemini: structured output, validation, caching, fallbacks
-│   └── rules.py        deterministic fallback classifier (and the eval baseline)
-├── tasks.py            Celery jobs: enrich_ticket (LLM triage + embedding), escalate_overdue
-├── management/commands/  escalate_overdue, seed_demo
-backend/tests/          79 tests: permissions matrix, workflow, SLA, AI, retrieval, jobs, CSAT, routing, performance
-backend/evals/          labelled dataset + evaluation harness
-backend/benchmarks/     query/latency benchmark, Locust load test
-```
+## Results you can check yourself
 
-## Design decisions
+| What | Result | How to check |
+|---|---|---|
+| Automated tests | **98 tests, about 97% of the backend code covered**, run on every push against PostgreSQL | `pytest --cov` in `backend/`, or the CI badge above |
+| Slow database pattern fixed (N+1 queries) | The ticket list used to run ~6 database queries **per ticket** (303 queries for 51 tickets). It now runs **2 queries per page**, no matter how many tickets | `tests/test_platform.py` fails if the count ever grows with the data |
+| AI never blocks the user | Creating a ticket does not wait for Gemini; AI work runs in the background with automatic retries | `tests/test_tasks.py` checks no AI call happens during the request |
+| Live updates are private | Customers only receive events for their own tickets, and never for private notes | `tests/test_websockets.py`, plus a CI check through the real nginx |
 
-**AI that degrades instead of breaking.**
-- Every LLM call has a hard timeout and a deterministic fallback. Without a key, or during
-  an outage, triage uses the rule-based classifier and the copilot returns the best-matching
-  past resolution. The product keeps working either way.
-- Outputs use Gemini structured output with enum schemas and are validated again
-  server-side, so the model cannot write an unknown category or status to the database.
-- User text is passed as delimited, untrusted data, which hardens against prompt injection.
-- Classification and embeddings are cached by content hash, and AI endpoints are rate-limited per user.
+How well the AI's suggestions match human judgement is measured separately, with honest caveats, in
+[`backend/evals/README.md`](backend/evals/README.md).
 
-**Measure the AI, don't assume it.**
-- The ticket stores the AI's original suggestion next to the final, human-edited values.
-  That gives a live accuracy signal from real usage (the share of tickets where agents kept
-  the AI's category and priority, shown on the admin dashboard) on top of the offline eval set.
+## Security, in plain words
 
-**Retrieval that is honest about its limits.**
-- Lexical TF-IDF needs no model, is deterministic and is unit-tested, but it misses paraphrases.
-- With Gemini embeddings, scores become a 70/30 semantic/lexical blend.
-- The duplicate threshold is chosen from a precision/recall sweep, not guessed. A false
-  "you already reported this" is worse than a missed one.
+- **Roles:** customers, agents and admins. Each role may change only certain fields, enforced on the server. A customer
+  can edit or close their own ticket but cannot change its priority, assign it, or see other customers' tickets.
+- **Login tokens are kept in httpOnly cookies.** JavaScript cannot read them, so a malicious script injected into the page
+  cannot steal them. Tokens expire after 15 minutes and are renewed silently.
+- **Cookies are `SameSite=Lax`**, so other websites cannot make the browser send them along with a form submission (this stops CSRF attacks).
+- **WebSockets check the `Origin` header**, so another website cannot open a live connection using your login.
+  The socket also closes when the login token expires, and the page reconnects with a fresh one.
+- **Sign in with Google:** Google gives the browser a signed token; the server checks Google's signature and that the
+  token was made for this app before logging anyone in. Only the public Client ID is needed, never a secret.
+- **Rate limits** on login and AI endpoints, and production settings pass Django's deployment checklist (`manage.py check --deploy`).
 
-**Security by construction.**
-- Permissions are enforced per field in one place (`workflow.EDITABLE_FIELDS`): customers
-  can edit or close only their own open tickets, and cannot touch priority, status or
-  assignment.
-- Role and email are read-only on the profile endpoint.
-- JWTs live in httpOnly, SameSite cookies, so JavaScript never sees a token. Access tokens
-  last 15 minutes, with rotating refresh tokens that are blacklisted after use.
-- In production the SPA and API share one origin behind nginx, so no CORS or
-  third-party cookies are needed.
-- `manage.py check --deploy` passes with zero warnings in CI (HSTS, secure cookies, SSL redirect).
+## Run it
 
-**Performance.**
-- List endpoints annotate comment counts and use `select_related`. Detail views prefetch
-  only what the caller may see.
-- Tests assert that the query count stays constant as data grows, so an N+1 regression fails CI.
-- Composite indexes cover the hot filters (status + priority, assignee + status, SLA deadline).
-
-## Running it
-
-**Docker (recommended)**
+**With Docker (recommended)**
 ```bash
-cp .env.example .env                       # add GEMINI_API_KEY for the LLM features (optional)
-docker compose up --build                  # dev: http://localhost:5173 (hot reload)
-docker compose exec backend python manage.py seed_demo   # demo users + 120 tickets
+cp .env.example .env              # optional: add GEMINI_API_KEY and GOOGLE_CLIENT_ID
+docker compose up --build         # app at http://localhost:5173 (reloads when you edit code)
+docker compose exec backend python manage.py seed_demo   # demo users and 120 tickets
 ```
 Demo logins (password `NexusDemo!2026`): `admin@nexusdesk.dev`, `agent1@nexusdesk.dev`, `customer1@nexusdesk.dev`.
+Open two browsers (for example one as an agent and one as a customer) to see live updates.
 
-**Production-style stack** (nginx + gunicorn + Postgres + Redis + Celery worker + beat):
+**Production-style** (nginx, Uvicorn, PostgreSQL, Redis, Celery worker and beat):
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build   # http://localhost
+docker compose -f docker-compose.prod.yml up -d --build  # http://localhost
 ```
 
-**Without Docker**
-```bash
-cd backend && pip install -r requirements-dev.txt
-DEBUG=True python manage.py migrate && DEBUG=True python manage.py seed_demo
-DEBUG=True python manage.py runserver
-cd ../frontend && npm ci && npm run dev    # proxies /api to :8000
-```
+**Google sign-in:** create an OAuth Client ID of type "Web application" in Google Cloud Console, add your site's address
+(for example `http://localhost:5173` and `http://localhost`) under "Authorized JavaScript origins", and put the ID in
+`GOOGLE_CLIENT_ID` in `.env`. The Google button appears automatically.
 
-**Quality checks**
+**Checks**
 ```bash
-cd backend
-pytest --cov                               # tests + coverage
-python evals/run_eval.py                   # AI evaluation
-python benchmarks/bench_api.py             # query counts + latency
-cd ../frontend && npm run lint && npm run build
+cd backend && pytest --cov            # tests
+cd frontend && npm run lint && npm run build
 ```
 
 ## API overview
 
-Full interactive docs are at `/api/docs/`.
+Interactive documentation is served at `/api/docs/`.
 
 | Endpoint | Who | Purpose |
 |---|---|---|
-| `GET /api/tickets/` | all (scoped) | paginated list. Filters: `status`, `priority`, `category`, `assigned_to=me`, `unassigned`, `sla_breached`, `active`, `search`, `ordering` |
-| `POST /api/tickets/` | all | create: instant triage, SLA and skills-based assignment; LLM triage + embedding queued |
-| `PATCH /api/tickets/:id/` | role-dependent | field-level permissions and a status state machine |
-| `POST /api/tickets/:id/comments/` | all (`is_internal` staff only) | reply or internal note |
-| `POST /api/tickets/classify/` | all, rate-limited | AI triage suggestion |
-| `POST /api/tickets/similar/` | all (scoped) | duplicate candidates |
-| `POST /api/tickets/:id/suggest_reply/` | staff, rate-limited | grounded reply draft with sources |
-| `POST /api/tickets/:id/rate/` | ticket owner, once resolved | CSAT score 1–5 + comment |
-| `GET /api/agents/` · `PATCH /api/agents/:id/` | staff · admin | staff directory · set routing specialties |
-| `GET /api/analytics/` | admin | SLA, CSAT, AI-agreement, volume, workload |
-| `GET /api/health/` | public | liveness + DB check |
+| `GET /api/tickets/` | everyone (customers see their own) | list with filters: status, priority, category, `assigned_to=me`, `unassigned`, `sla_breached`, search |
+| `POST /api/tickets/` | everyone | create a ticket (deadlines and assignment are set here; AI runs afterwards) |
+| `PATCH /api/tickets/:id/` | depends on role | update; each role may change only certain fields |
+| `POST /api/tickets/:id/comments/` | everyone (private notes: staff only) | reply or private note |
+| `POST /api/tickets/:id/rate/` | the customer, once solved | rating 1–5 with optional comment |
+| `POST /api/tickets/classify/` · `/similar/` | everyone, rate-limited | AI suggestion · "already reported?" check |
+| `POST /api/tickets/:id/suggest_reply/` | staff, rate-limited | AI draft reply plus the past tickets it used |
+| `GET /api/analytics/` | admin | dashboard numbers |
+| `POST /api/auth/google/` · `GET /api/auth/config/` | public | Google sign-in · public settings (the Google Client ID) |
+| `ws://…/ws/` | logged-in users | live "ticket changed" events |
 
-## Screenshots
+## Project layout
 
-| Agent queue (sorted by SLA deadline) | AI copilot draft with its sources |
-|---|---|
-| ![Agent queue](screenshots/agent-queue.png) | ![Copilot](screenshots/agent-ticket-copilot.png) |
-| **New ticket: AI triage + duplicate warning** | **Customer dashboard** |
-| ![New ticket](screenshots/customer-new-ticket.png) | ![Customer](screenshots/customer-dashboard.png) |
+```
+backend/
+  tickets/
+    views.py             API endpoints (thin: they call the services below)
+    services/workflow.py all changes to tickets: permissions, status rules, deadlines, history, live events
+    services/sla.py      deadline rules
+    services/assignment.py  pick the least busy agent with the right skills
+    services/search.py   find similar tickets (word matching, plus AI embeddings when a key is set)
+    services/ai.py       Gemini calls with timeouts, caching and a rule-based fallback
+    tasks.py             background jobs (AI enrichment, escalation)
+    consumers.py         WebSocket endpoint
+    realtime.py          sends live events after a change is saved
+    auth_views.py        password, sign-up and Google sign-in
+  tests/                 98 automated tests
+  evals/                 sample tickets used to measure the AI
+frontend/src/
+  context/RealtimeProvider.jsx   the WebSocket connection, reconnects, pop-ups
+  components/, pages/            screens
+```
 
-Screenshots are generated by CI (`.github/workflows/screenshots.yml`) from the real production stack with demo
-data: run the workflow from the Actions tab, or push a commit whose message contains `[screenshots]`.
+## Known limitations and next steps
 
-## Roadmap
-
-- Move embeddings to pgvector and lexical search to Postgres full-text once candidate sets exceed ~10k
-- Push ticket updates to the UI over WebSockets (Django Channels) instead of refresh-on-navigate
-- Business-hours SLA calendars (deadlines currently run on wall-clock time)
+- Deadlines count every hour, including nights and weekends; a business-hours calendar would be more realistic.
+- Every agent receives every ticket event; with thousands of agents you would split them into per-team groups.
+- Similar-ticket search compares against up to 1,000 recent tickets in Python; at larger scale this would move into
+  PostgreSQL (full-text search and the pgvector extension).
+- The AI evaluation set is small (96 tickets) and written by me; real ticket data would give a more trustworthy number.
 
 ---
-Built by **Swati Shah**. Previously deployed on an Azure VM (Docker Compose + nginx); see `docker-compose.prod.yml`.
+Built by **Swati Shah**.

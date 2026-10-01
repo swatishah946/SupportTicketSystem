@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { AuthContext } from '../context/auth';
+import { useDebouncedTicketEvents } from '../context/realtime';
 import { Badge, Pager, SlaBadge } from './ui';
 import { CATEGORIES, label, PRIORITIES, STATUSES } from '../lib/format';
 
@@ -42,10 +43,16 @@ const TicketList = ({ preset = {}, showFilters = true, emptyText = 'No tickets m
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [filters, setFilters] = useState({ status: '', priority: '', category: '' });
+    const [version, setVersion] = useState(0); // bumped by live updates to re-fetch
+
+    useDebouncedTicketEvents(() => setVersion((v) => v + 1));
 
     // Everything that defines the request, as one stable key.
     const requestKey = JSON.stringify({ ...preset, ...filters, search: debouncedSearch, page, page_size: PAGE_SIZE });
-    const loading = response.key !== requestKey;
+    const fetchKey = `${requestKey}#${version}`;
+    const loading = response.key === null;
+    // Dim while the user's own filter/page change loads; live refreshes swap data in silently.
+    const refreshing = !loading && response.key.split('#')[0] !== requestKey;
     const { data, error } = response;
 
     useEffect(() => {
@@ -58,14 +65,14 @@ const TicketList = ({ preset = {}, showFilters = true, emptyText = 'No tickets m
 
     useEffect(() => {
         let cancelled = false;
-        const params = Object.fromEntries(Object.entries(JSON.parse(requestKey)).filter(([, v]) => v !== ''));
+        const params = Object.fromEntries(Object.entries(JSON.parse(fetchKey.split('#')[0])).filter(([, v]) => v !== ''));
         api.get('/tickets/', { params })
-            .then((res) => { if (!cancelled) setResponse({ key: requestKey, data: res.data, error: '' }); })
+            .then((res) => { if (!cancelled) setResponse({ key: fetchKey, data: res.data, error: '' }); })
             .catch(() => {
-                if (!cancelled) setResponse((r) => ({ ...r, key: requestKey, error: 'Failed to load tickets.' }));
+                if (!cancelled) setResponse((r) => ({ ...r, key: fetchKey, error: 'Failed to load tickets.' }));
             });
         return () => { cancelled = true; };
-    }, [requestKey]);
+    }, [fetchKey]);
 
     const setFilter = (key) => (e) => {
         setFilters((f) => ({ ...f, [key]: e.target.value }));
@@ -98,7 +105,7 @@ const TicketList = ({ preset = {}, showFilters = true, emptyText = 'No tickets m
             ) : data.results.length === 0 ? (
                 <p className="empty">{emptyText}</p>
             ) : (
-                <div className="ticket-grid" style={{ opacity: loading ? 0.6 : 1 }}>
+                <div className="ticket-grid" style={{ opacity: refreshing ? 0.6 : 1 }}>
                     {data.results.map((t) => <TicketCard key={t.id} ticket={t} isCustomer={user?.role === 'customer'} />)}
                 </div>
             )}

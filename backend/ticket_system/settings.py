@@ -43,11 +43,12 @@ ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1,backend")
 # The container health check calls 127.0.0.1 directly; keep it valid whatever the public host is.
 ALLOWED_HOSTS += [h for h in ("127.0.0.1", "localhost") if h not in ALLOWED_HOSTS]
 
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-GOOGLE_OAUTH_CALLBACK_URL = os.environ.get("GOOGLE_OAUTH_CALLBACK_URL", "http://localhost:5173")
+# "Sign in with Google": only the OAuth Client ID is needed (no client secret),
+# because the backend verifies the ID token Google issues to the browser.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 
 INSTALLED_APPS = [
+    "daphne",  # makes `manage.py runserver` serve WebSockets too (dev only)
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -55,6 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.sites",
+    "channels",
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
@@ -64,8 +66,7 @@ INSTALLED_APPS = [
     "dj_rest_auth.registration",
     "allauth",
     "allauth.account",
-    "allauth.socialaccount",
-    "allauth.socialaccount.providers.google",
+    "allauth.socialaccount",  # required by dj-rest-auth's registration module
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "tickets",
@@ -102,6 +103,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "ticket_system.wsgi.application"
+ASGI_APPLICATION = "ticket_system.asgi.application"  # HTTP + WebSockets (served by Uvicorn)
 
 DATABASES = {
     "default": dj_database_url.config(
@@ -111,7 +113,7 @@ DATABASES = {
     )
 }
 
-# Redis when available (shared across gunicorn workers), in-process otherwise.
+# Redis when available (shared across web worker processes), in-process otherwise.
 if os.environ.get("REDIS_URL"):
     CACHES = {
         "default": {
@@ -121,6 +123,19 @@ if os.environ.get("REDIS_URL"):
     }
 else:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+# WebSocket fan-out. Redis lets every web process *and* the Celery worker push
+# events to any connected browser; the in-memory layer only works inside one
+# process, which is fine for local development and tests.
+if os.environ.get("REDIS_URL"):
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [os.environ["REDIS_URL"]]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -221,22 +236,6 @@ ACCOUNT_USER_MODEL_USERNAME_FIELD = "username"
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_EMAIL_VERIFICATION = os.environ.get("ACCOUNT_EMAIL_VERIFICATION", "none")
 
-SOCIALACCOUNT_PROVIDERS = {
-    "google": {
-        "SCOPE": ["profile", "email"],
-        "AUTH_PARAMS": {"access_type": "online"},
-    }
-}
-# Configure Google from env when provided; otherwise a SocialApp row in the
-# admin still works (defining both would make allauth see two apps).
-if GOOGLE_CLIENT_ID:
-    SOCIALACCOUNT_PROVIDERS["google"]["APP"] = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "secret": GOOGLE_CLIENT_SECRET or "",
-        "key": "",
-    }
-SOCIALACCOUNT_AUTO_SIGNUP = True
-SOCIALACCOUNT_EMAIL_VERIFICATION = "optional"
 
 if os.environ.get("EMAIL_HOST"):
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"

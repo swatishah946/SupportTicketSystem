@@ -1,9 +1,11 @@
 import React, { useContext } from 'react';
 import { Link } from 'react-router-dom';
 import { AuthContext } from '../context/auth';
+import { useRealtimeStatus } from '../context/realtime';
 
 const NavBar = () => {
     const { user, logout } = useContext(AuthContext);
+    const liveStatus = useRealtimeStatus();
 
     const navStyle = {
         display: 'flex',
@@ -63,6 +65,9 @@ const NavBar = () => {
                     </>
                 ) : (
                     <>
+                        <span className={`live live-${liveStatus}`} title="Real-time updates">
+                            ● {liveStatus === 'live' ? 'Live' : 'Reconnecting'}
+                        </span>
                         {user.role === 'admin' && (
                             <>
                                 <Link to="/admin" style={linkStyle}>DASHBOARD</Link>

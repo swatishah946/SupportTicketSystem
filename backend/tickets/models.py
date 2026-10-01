@@ -37,6 +37,8 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER, db_index=True)
     # Ticket categories an agent specialises in; auto-assignment prefers specialists.
     specialties = models.JSONField(default=list, blank=True)
+    # Google's permanent account id ("sub" claim), set on first Google sign-in.
+    google_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
 
     objects = CustomUserManager()
 

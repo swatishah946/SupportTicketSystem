@@ -78,5 +78,10 @@ jobs:
           for i in $(seq 1 30); do curl -fs http://localhost/api/health/ && break; sleep 3; done
           curl -fs http://localhost/api/health/
           curl -fs http://localhost/ | grep -q '<div id="root">'
+      - name: Live updates work through nginx (WebSocket)
+        run: |
+          docker compose -f docker-compose.prod.yml exec -T backend python manage.py seed_demo --tickets 10 --force
+          pip install websockets requests
+          python scripts/check_websocket.py http://localhost
       - if: always()
         run: docker compose -f docker-compose.prod.yml logs --tail 100

@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
-import { GoogleLogin } from '@react-oauth/google';
 import { useNavigate, Link } from 'react-router-dom';
 import api, { errorMessage } from '../api';
+import GoogleButton from '../components/GoogleButton';
 import { AuthContext, homeFor } from '../context/auth';
 
 function LoginPage() {
@@ -17,12 +17,10 @@ function LoginPage() {
         navigate(homeFor(user.role));
     };
 
-    const handleGoogleSuccess = async (credentialResponse) => {
+    const handleGoogleCredential = async (credential) => {
+        setError('');
         try {
-            const res = await api.post('/auth/google/', {
-                access_token: credentialResponse.credential,
-                id_token: credentialResponse.credential
-            });
+            const res = await api.post('/auth/google/', { credential });
             finishLogin(res.data.user);
         } catch (err) {
             setError(errorMessage(err, 'Google login failed.'));
@@ -111,12 +109,7 @@ function LoginPage() {
                 </div>
             </form>
 
-            <div style={{ marginTop: '20px' }}>
-                <GoogleLogin
-                    onSuccess={handleGoogleSuccess}
-                    onError={() => setError('Google Login Failed')}
-                />
-            </div>
+            <GoogleButton onCredential={handleGoogleCredential} onError={setError} />
         </div>
     );
 }

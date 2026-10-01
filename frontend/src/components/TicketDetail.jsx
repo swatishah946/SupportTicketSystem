@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api, { errorMessage } from '../api';
 import { AuthContext } from '../context/auth';
+import { useDebouncedTicketEvents } from '../context/realtime';
 import { Badge, SlaBadge } from './ui';
 import { CATEGORIES, label, PRIORITIES, STATUSES, deadline } from '../lib/format';
 
@@ -64,6 +65,7 @@ function RatingCard({ ticketId, onRated }) {
 function StaffControls({ ticket, onSaved }) {
     const [agents, setAgents] = useState([]);
     const [form, setForm] = useState({});
+    const [dirty, setDirty] = useState(false); // unsaved edits survive live updates
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
@@ -72,6 +74,7 @@ function StaffControls({ ticket, onSaved }) {
     }, []);
 
     useEffect(() => {
+        if (dirty) return;
         setForm({
             status: ticket.status,
             priority: ticket.priority,
@@ -80,9 +83,12 @@ function StaffControls({ ticket, onSaved }) {
             duplicate_of_id: ticket.duplicate_of ?? '',
             resolution_notes: ticket.resolution_notes || '',
         });
-    }, [ticket]);
+    }, [ticket, dirty]);
 
-    const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+    const set = (key) => (e) => {
+        setDirty(true);
+        setForm((f) => ({ ...f, [key]: e.target.value }));
+    };
 
     const save = async () => {
         const original = {
@@ -96,11 +102,15 @@ function StaffControls({ ticket, onSaved }) {
                 changes[k] = (k.endsWith('_id') && v === '') ? null : (k.endsWith('_id') ? Number(v) : v);
             }
         });
-        if (!Object.keys(changes).length) return;
+        if (!Object.keys(changes).length) {
+            setDirty(false);
+            return;
+        }
         setSaving(true);
         setError('');
         try {
             const res = await api.patch(`/tickets/${ticket.id}/`, changes);
+            setDirty(false);
             onSaved(res.data);
         } catch (err) {
             setError(errorMessage(err, 'Update failed.'));
@@ -175,6 +185,11 @@ const TicketDetail = () => {
     }, [id]);
 
     useEffect(() => { load(); }, [load]);
+
+    // Live updates: re-fetch when someone else changes this ticket.
+    useDebouncedTicketEvents((event) => {
+        if (event.ticket === Number(id) && event.actor_id !== user?.id) load();
+    }, 250);
 
     const sendReply = async () => {
         if (!reply.trim()) return;

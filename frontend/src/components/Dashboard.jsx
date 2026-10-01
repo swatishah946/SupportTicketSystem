@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
+import { useDebouncedTicketEvents } from '../context/realtime';
 import { Stat } from './ui';
 import { CATEGORIES, formatMinutes, label, pct } from '../lib/format';
 
@@ -52,12 +53,16 @@ function Specialties({ agent, onChange }) {
 const Dashboard = () => {
     const [stats, setStats] = useState(null);
     const [error, setError] = useState('');
+    const [version, setVersion] = useState(0);
 
     useEffect(() => {
         api.get('/analytics/')
             .then((res) => setStats(res.data))
             .catch(() => setError('Failed to load analytics.'));
-    }, []);
+    }, [version]);
+
+    // Live updates: refresh the numbers, at most every 2 seconds during bursts.
+    useDebouncedTicketEvents(() => setVersion((v) => v + 1), 2000);
 
     if (error) return <p className="error">{error}</p>;
     if (!stats) return <p>Loading analytics…</p>;

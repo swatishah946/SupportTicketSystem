@@ -64,7 +64,6 @@ services:
       - "127.0.0.1:5173:5173"
     environment:
       VITE_PROXY_TARGET: http://backend:8000
-      VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
       CHOKIDAR_USEPOLLING: "true"
     depends_on:
       - backend

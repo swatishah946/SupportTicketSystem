@@ -34,6 +34,54 @@ def shot(page, out, name, full_page=True):
     print("saved", path)
 
 
+def check_live_update(browser, base, out):
+    """Real-browser test of WebSockets through nginx: an agent replies in one
+    browser and the customer's open ticket page updates without a reload."""
+    customer = browser.new_context(viewport=VIEWPORT).new_page()
+    login(customer, base, "customer2@nexusdesk.dev")
+    ticket = customer.request.post(f"{base}/api/tickets/", data={
+        "title": "CSV export fails",
+        "description": "Exporting last year's report to CSV shows error 500.",
+    }).json()
+    customer.goto(f"{base}/tickets/{ticket['id']}")
+    customer.wait_for_selector(".live-live", timeout=15000)  # WebSocket connected
+
+    agent = browser.new_context(viewport=VIEWPORT).new_page()
+    login(agent, base, ticket["assigned_to"]["email"])
+    reply = "Found it: exports over 12 months time out. Please pick a shorter date range for now."
+    agent.request.post(f"{base}/api/tickets/{ticket['id']}/comments/", data={"body": reply})
+
+    customer.wait_for_selector(f"text={reply}", timeout=15000)  # appeared without reloading
+    customer.wait_for_selector(".toast", timeout=5000)
+    shot(customer, out, "live-update", full_page=False)
+    print("Live update OK: reply appeared on the customer's open page without a reload")
+
+
+def check_google_button(browser, base, out):
+    """Open the login page and confirm Google accepts our Client ID for this origin.
+
+    Google's script logs "[GSI_LOGGER]" errors such as "The given origin is not
+    allowed for the given client ID" when the Cloud Console setup is wrong.
+    """
+    page = browser.new_context(viewport=VIEWPORT).new_page()
+    console = []
+    page.on("console", lambda msg: console.append(msg.text))
+    page.goto(f"{base}/login")
+    page.wait_for_load_state("networkidle")
+    if not page.query_selector("[data-testid=google-signin]"):
+        print("Google sign-in not configured (no GOOGLE_CLIENT_ID); skipping check")
+        return True
+    page.wait_for_selector("iframe[src*='accounts.google.com']", timeout=20000)
+    page.wait_for_timeout(4000)
+    shot(page, out, "login-google", full_page=False)
+    problems = [m for m in console if "GSI_LOGGER" in m]
+    for message in problems:
+        print("Google sign-in problem:", message)
+    if not problems:
+        print("Google sign-in button loaded without errors for", base)
+    return not problems
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="http://localhost")
@@ -85,7 +133,12 @@ def main():
         page.wait_for_selector(".ticket-card, .empty")
         shot(page, out, "customer-dashboard", full_page=False)
 
+        check_live_update(browser, base, out)
+
+        google_ok = check_google_button(browser, base, out)
         browser.close()
+    if not google_ok:
+        raise SystemExit("Google sign-in is misconfigured: see messages above")
 
 
 if __name__ == "__main__":

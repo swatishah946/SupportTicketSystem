@@ -1,56 +1,52 @@
-# Evaluating NexusDesk's AI features
+# How the AI features are checked
 
-The AI features are measured, not assumed. `run_eval.py` scores them against a
-labelled dataset, and CI runs the key-free baseline on every push.
+The AI suggestions are measured on a fixed set of sample tickets, so changes can be compared and
+nothing is claimed without a number behind it. CI runs the no-API-key version on every push.
 
 ```bash
 cd backend
-python evals/run_eval.py                                     # rule-based triage + lexical retrieval
-GEMINI_API_KEY=... python evals/run_eval.py --classifier llm --retriever hybrid
+python evals/run_eval.py                                    # keyword rules + word matching (no API key needed)
+GEMINI_API_KEY=... python evals/run_eval.py --classifier llm --retriever hybrid   # Gemini
 ```
 
-Results land in `evals/results/<classifier>-<retriever>.json`.
+Results are saved to `evals/results/`.
 
-## Dataset
+## The sample tickets
 
-`tickets.jsonl` holds **96 hand-written tickets: 24 distinct issues × 4 paraphrases**.
-Each ticket is labelled with a category, a priority and an intent (the issue it is about).
-The paraphrases deliberately vary vocabulary ("charged twice" / "two debits" / "billed 2x"),
-because that is what makes duplicate detection hard.
+`tickets.jsonl` has **96 tickets I wrote by hand: 24 different problems, each described 4 different ways**
+(for example "charged twice", "two debits for one order", "billed 2x"). Each ticket is labelled with the right
+category, the right priority and which problem it is.
 
-**Caveats, stated up front:**
-- The tickets are synthetic and written by the project author, not production data.
-- Priority labels follow the rubric in `CLASSIFY_SYSTEM` (see `tickets/services/ai.py`).
-  Priority is partly subjective, so "within one level" is reported alongside exact match.
-- The rule-based classifier was written before the dataset existed and was not tuned on it.
-- A synonym-expansion experiment raised duplicate hit@1 from 58% to 79% on this set.
-  It was **not** shipped, because the synonym list was written after seeing this data and
-  its score would be overfit. Semantic embeddings (hybrid mode) are the principled fix.
+**Be aware of the limits:**
+- The tickets are made up, not real customer data, and the same person wrote the tickets and the labels.
+- Priority is partly a matter of opinion, so "off by at most one level" is reported next to "exactly right".
+- 96 tickets is a small sample: treat the numbers as a rough guide, not a precise score.
 
-## Metrics
+## What is measured, and the results without an API key
 
-| Task | Metric | Meaning |
-|---|---|---|
-| Triage | category accuracy, macro-F1 | 4 classes; macro-F1 weights each class equally |
-| Triage | priority accuracy, within-one | exact level, and at most one level off (e.g. high vs critical) |
-| Duplicates | hit@1, hit@3 | a paraphrase of the same issue is ranked 1st / in the top 3 |
-| Duplicates | recall @ τ | share of tickets whose true duplicate scores ≥ τ (would be flagged) |
-| Duplicates | false-positive rate @ τ | *leave-intent-out*: all tickets of the query's issue are removed, so any flag is wrong |
+**1. Category and priority suggestions** (keyword-rule fallback, used when Gemini is unavailable)
 
-## Results (rule-based triage, lexical TF-IDF retrieval, no API key)
-
-| Metric | Value |
+| Question | Result |
 |---|---|
-| Category accuracy | **83.3%** (macro-F1 0.839) |
-| Priority exact / within one level | 65.6% / **94.8%** |
-| Classification latency p50 | 0.25 ms |
-| Duplicate hit@1 / hit@3 | 58.3% / 66.7% |
-| At τ = 0.30 (shipped default) | recall 29.2%, false positives **6.2%** |
+| How often is the category right? | **83%** (80 of 96) |
+| How often is the priority exactly right? | 66% |
+| How often is the priority right or off by just one level? | **95%** |
 
-The duplicate warning uses a conservative threshold on purpose. A false "you already
-reported this" is worse than a missed one, so the default favours precision
-(6% false alarms) over recall.
+**2. "You already reported this" warning** (word matching)
 
-Lexical retrieval cannot match paraphrases that share no words. That is the job of
-hybrid mode, which blends Gemini embeddings (70%) with TF-IDF (30%). Run it with a key
-and set `DUPLICATE_THRESHOLD_HYBRID` from the sweep it prints.
+For each ticket, the other 95 are searched for the same problem described differently.
+
+| Question | Result |
+|---|---|
+| Is the top match the same problem? | 58% of the time |
+| False alarms: how often is an unrelated ticket flagged? | **6%** at the threshold the app uses |
+| Missed duplicates at that threshold | about 70% are not flagged |
+
+The threshold is deliberately strict. Telling a customer "you already reported this" when they didn't is worse than
+missing a duplicate, so the app accepts missing many paraphrased duplicates to keep false alarms rare. Word matching
+can't connect "charged twice" with "two debits" because they share no words. That is what the Gemini embeddings
+(hybrid mode) are for: they compare meaning instead of words. Run the Gemini command above to measure that mode.
+
+**An experiment I did not keep:** adding a hand-made synonym list raised the "top match" score from 58% to 79%.
+I didn't ship it because I wrote the list after looking at these same tickets, so the improvement would mostly
+reflect the test data rather than real use.

@@ -22,4 +22,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=4).status == 200 else 1)"
 
 # Migrations run on start so a fresh database (or a new release) is always in sync.
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn ticket_system.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout 60 --access-logfile -"]
+# Uvicorn serves the ASGI app: regular HTTP plus WebSockets (/ws/).
+CMD ["sh", "-c", "python manage.py migrate --noinput && uvicorn ticket_system.asgi:application --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-3} --proxy-headers --forwarded-allow-ips='*'"]

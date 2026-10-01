@@ -1,6 +1,5 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { GoogleOAuthProvider } from '@react-oauth/google';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './components/Dashboard';
@@ -14,14 +13,13 @@ import NavBar from './components/NavBar';
 import ProtectedRoute from './components/ProtectedRoute';
 import RootRedirect from './components/RootRedirect';
 import { AuthProvider } from './context/AuthContext';
+import { RealtimeProvider } from './context/RealtimeProvider';
 
 function App() {
-  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.VITE_OAUTH || "";
-
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <AuthProvider>
         <Router>
+         <RealtimeProvider>
           <NavBar />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -91,9 +89,9 @@ function App() {
             {/* Fallback route */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+         </RealtimeProvider>
         </Router>
       </AuthProvider>
-    </GoogleOAuthProvider>
   );
 }
 

@@ -11,6 +11,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from ..models import Ticket, TicketComment, TicketEvent, User
+from ..realtime import publish
 from . import ai, sla
 from .assignment import least_loaded_agent
 
@@ -70,6 +71,7 @@ def create_ticket(user, title, description, category=None, priority=None):
 
     ai_fields = [f for f, given in (("category", category), ("priority", priority)) if not given]
     transaction.on_commit(lambda: enrich_ticket.delay(ticket.pk, ai_fields))
+    publish(ticket, "created", user)
     return ticket
 
 
@@ -93,6 +95,8 @@ def apply_ai_triage(ticket, suggestion, ai_fields):
         sla.apply_sla(ticket)
         changed += ["priority", "first_response_due", "resolution_due"]
     ticket.save(update_fields=["ai_category", "ai_priority", "ai_source", *changed])
+    if changed:
+        publish(ticket, "updated", None, fields=[f for f in changed if f in ("category", "priority")])
     return changed
 
 
@@ -114,6 +118,7 @@ def escalate_overdue(dry_run=False, now=None):
             ticket.priority = new_priority
             ticket.escalated = True
             ticket.save(update_fields=["priority", "escalated", "updated_at"])
+            publish(ticket, "escalated", None, internal=True)
     return escalated
 
 
@@ -127,6 +132,10 @@ def _set_status(ticket, new_status, actor, now):
     elif new_status in Ticket.ACTIVE_STATUSES:
         ticket.resolved_at = None  # reopened
     log_event(ticket, actor, TicketEvent.Kind.STATUS, old, new_status)
+
+
+TRACKED_FIELDS = ("status", "priority", "category", "assigned_to_id", "duplicate_of_id",
+                  "title", "description", "resolution_notes")
 
 
 @transaction.atomic
@@ -145,6 +154,7 @@ def update_ticket(ticket, user, changes):
 
     now = timezone.now()
     customer_visible_change = False
+    before = {f: getattr(ticket, f) for f in TRACKED_FIELDS}
 
     if "assigned_to" in changes:
         assignee = changes["assigned_to"]
@@ -187,6 +197,9 @@ def update_ticket(ticket, user, changes):
     if customer_visible_change and user.is_staff_member:
         ticket.has_unread_updates = True
     ticket.save()
+    changed = [f.removesuffix("_id") for f in TRACKED_FIELDS if getattr(ticket, f) != before[f]]
+    if changed:
+        publish(ticket, "updated", user, fields=changed)
     return ticket
 
 
@@ -218,6 +231,7 @@ def add_comment(ticket, user, body, is_internal=False):
             update_fields += ["status", "resolved_at"]
 
     ticket.save(update_fields=update_fields)
+    publish(ticket, "note" if is_internal else "comment", user, internal=is_internal)
     return comment
 
 
@@ -235,6 +249,7 @@ def rate_ticket(ticket, user, score, comment=""):
     ticket.csat_at = timezone.now()
     ticket.save(update_fields=["csat_score", "csat_comment", "csat_at", "updated_at"])
     log_event(ticket, user, TicketEvent.Kind.RATED, to_value=f"{score}/5")
+    publish(ticket, "rated", user)
     return ticket
 
 
