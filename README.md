@@ -59,7 +59,7 @@ flowchart LR
 | **PostgreSQL** | The database. |
 | **Gemini** | The AI model. Optional: without an API key the app uses simple keyword rules instead, so it always works. |
 
-## Results you can check yourself
+## Results
 
 | What | Result | How to check |
 |---|---|---|
@@ -71,7 +71,7 @@ flowchart LR
 How well the AI's suggestions match human judgement is measured separately, with honest caveats, in
 [`backend/evals/README.md`](backend/evals/README.md).
 
-## Security, in plain words
+## Security
 
 - **Roles:** customers, agents and admins. Each role may change only certain fields, enforced on the server. A customer
   can edit or close their own ticket but cannot change its priority, assign it, or see other customers' tickets.
