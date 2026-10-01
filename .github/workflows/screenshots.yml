@@ -48,6 +48,7 @@ jobs:
           git add screenshots/*.png
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "Update UI screenshots"
+          git pull --rebase origin "${GITHUB_REF_NAME}"  # a newer commit may have landed meanwhile
           git push
           # Commits pushed with GITHUB_TOKEN don't trigger CI, which would leave the
           # PR head unchecked; workflow_dispatch is the sanctioned way to run it.

@@ -17,4 +17,4 @@ dist/
 coverage/
 staticfiles/
 db.sqlite3
-backend/benchmarks/results-*.json
+backend/benchmarks/results-sqlite.json

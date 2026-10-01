@@ -27,6 +27,7 @@ os.environ["ALLOWED_HOSTS"] = "testserver"
 os.environ["GEMINI_API_KEY"] = ""
 os.environ["THROTTLE_USER"] = "1000000/min"
 os.environ["THROTTLE_AI"] = "1000000/min"
+os.environ["LOG_LEVEL"] = "WARNING"
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ticket_system.settings")
 
 import django  # noqa: E402

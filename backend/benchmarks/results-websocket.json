@@ -1,0 +1,15 @@
+{
+  "cpus": 2,
+  "reply_delivery": {
+    "replies": 200,
+    "p50_ms": 29.0,
+    "p95_ms": 45.9,
+    "max_ms": 235.2
+  },
+  "fan_out": {
+    "sockets": 1000,
+    "rounds": 20,
+    "all_received_p50_ms": 305.3,
+    "all_received_p95_ms": 474.3
+  }
+}
